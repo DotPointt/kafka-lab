@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kafka Lab</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='7' r='4' fill='%23f5a524'/%3E%3Ccircle cx='7' cy='24' r='4' fill='%2360a5fa'/%3E%3Ccircle cx='25' cy='24' r='4' fill='%2322c55e'/%3E%3Cpath d='M16 11v6M16 17l-7 4M16 17l7 4' stroke='%23d7dce5' stroke-width='2'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">
+        <svg viewBox="0 0 32 32" width="22" height="22"><circle cx="16" cy="7" r="4" fill="#f5a524"/><circle cx="7" cy="24" r="4" fill="#60a5fa"/><circle cx="25" cy="24" r="4" fill="#22c55e"/><path d="M16 11v6M16 17l-7 4M16 17l7 4" stroke="currentColor" stroke-width="2"/></svg>
+      </span>
+      <span class="brand-name">Kafka Lab</span>
+    </div>
+    <nav class="tabs" role="tablist">
+      <button class="tab-btn active" data-tab="live" role="tab">Живая схема</button>
+      <button class="tab-btn" data-tab="docs" role="tab">Памятки</button>
+      <button class="tab-btn" data-tab="cards" role="tab">Карточки</button>
+    </nav>
+    <div class="health" id="health"></div>
+    <div class="top-actions">
+      <span class="conn" id="conn" title="Соединение с control-center">●</span>
+      <button class="btn" id="btn-scenarios" title="Пошаговые лабораторные работы">🎓 Сценарии</button>
+      <button class="btn btn-heal" id="btn-heal" title="Снять все паузы, вернуть сеть, запустить остановленные контейнеры">🩹 Починить всё</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- ============ ЖИВАЯ СХЕМА ============ -->
+    <section class="tab-page active" id="tab-live">
+      <div class="live-layout">
+        <div class="live-main">
+          <div class="demo-bar hidden" id="demo-bar"></div>
+          <div class="live-grid" id="live-grid">
+            <div class="col col-producers">
+              <div class="col-title"><span>Producers</span><span class="col-hint">пишут в топики</span></div>
+              <div id="producers" class="stack"></div>
+            </div>
+            <div class="col col-brokers">
+              <div class="col-title">
+                <span>Кластер Kafka · KRaft</span>
+                <span class="col-hint" id="cluster-hint"></span>
+              </div>
+              <div class="legend" id="legend"></div>
+              <div id="brokers" class="stack"></div>
+              <div class="cluster-tools">
+                <button class="btn btn-sm" id="btn-preferred" title="Вернуть лидерство предпочтительным репликам (первым в списке replicas)">⚖ Предпочтительные лидеры</button>
+                <label class="chk"><input type="checkbox" id="chk-flow" checked> анимация потоков</label>
+                <label class="chk"><input type="checkbox" id="chk-replication" checked> репликация</label>
+              </div>
+            </div>
+            <div class="col col-consumers">
+              <div class="col-title"><span>Consumer groups</span><span class="col-hint">читают топики</span></div>
+              <div id="groups" class="stack"></div>
+            </div>
+            <canvas id="flow" aria-hidden="true"></canvas>
+          </div>
+
+          <div class="bottom">
+            <div class="bottom-left panel">
+              <div class="subtabs" role="tablist">
+                <button class="subtab active" data-sub="partitions">Партиции и offset-ы</button>
+                <button class="subtab" data-sub="charts">Графики</button>
+                <button class="subtab" data-sub="messages">Сообщения</button>
+              </div>
+              <div class="sub-page active" id="sub-partitions"></div>
+              <div class="sub-page" id="sub-charts"></div>
+              <div class="sub-page" id="sub-messages"></div>
+            </div>
+            <div class="bottom-right panel">
+              <div class="events-head">
+                <h3>Журнал событий</h3>
+                <div class="events-filters" id="events-filters">
+                  <button class="chip-btn active" data-f="all">все</button>
+                  <button class="chip-btn" data-f="cluster">кластер</button>
+                  <button class="chip-btn" data-f="group">группы</button>
+                  <button class="chip-btn" data-f="service">сервисы</button>
+                  <button class="chip-btn" data-f="action">действия</button>
+                  <button class="chip-btn" data-f="problems">проблемы</button>
+                </div>
+                <input type="search" id="events-search" placeholder="поиск…">
+              </div>
+              <div class="events" id="events"></div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="drawer" id="drawer" aria-label="Сценарии">
+          <div class="drawer-head">
+            <h3 id="drawer-title">Сценарии</h3>
+            <button class="icon-btn" id="drawer-close" title="Закрыть">✕</button>
+          </div>
+          <div class="drawer-body" id="drawer-body"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ============ ПАМЯТКИ ============ -->
+    <section class="tab-page" id="tab-docs">
+      <div class="docs-layout">
+        <aside class="docs-nav">
+          <input type="search" id="docs-search" placeholder="поиск по памяткам…">
+          <div id="docs-list"></div>
+          <div class="docs-toc" id="docs-toc"></div>
+        </aside>
+        <article class="doc" id="doc"></article>
+      </div>
+    </section>
+
+    <!-- ============ КАРТОЧКИ ============ -->
+    <section class="tab-page" id="tab-cards">
+      <div class="cards-layout" id="cards"></div>
+    </section>
+  </main>
+
+  <div class="tooltip" id="tooltip" role="tooltip"></div>
+  <div class="popover" id="popover"></div>
+  <div class="toasts" id="toasts"></div>
+
+  <script src="config.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>

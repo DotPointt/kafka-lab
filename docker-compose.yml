@@ -1,0 +1,206 @@
+# Kafka Lab — учебный стенд: кластер Kafka из 3 узлов (KRaft) + сервисы на C#, Python и Go
+# + control-center с визуализацией, нагрузкой и имитацией сбоев.
+#
+#   docker compose up -d --build        # поднять всё
+#   open http://localhost:8080          # визуализация
+#   docker compose --profile ui up -d   # + Kafka UI (kafbat) на http://localhost:8090
+#   docker compose down -v              # снести всё
+name: kafka-lab
+
+# ---------- Общие настройки брокеров ----------
+x-kafka-base: &kafka-base
+  image: kafka-lab/kafka:4.1.0
+  # Образ собирается один раз (в сервисе kafka-1), остальные узлы используют его же
+  pull_policy: never
+  # NET_ADMIN нужен, чтобы control-center мог через `tc` портить сеть брокера (задержки, потери, изоляция)
+  cap_add: [NET_ADMIN]
+  networks: [kafka-net]
+  restart: "no"
+  healthcheck:
+    test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/9092' || exit 1"]
+    interval: 5s
+    timeout: 3s
+    retries: 40
+    start_period: 5s
+
+x-kafka-env: &kafka-env
+  # Один ID кластера на все узлы (base64 UUID). Генерируется: kafka-storage.sh random-uuid
+  CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qg"
+  # Combined mode: каждый узел одновременно и брокер (данные), и контроллер (метаданные, Raft-кворум)
+  KAFKA_PROCESS_ROLES: "broker,controller"
+  KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka-1:9093,2@kafka-2:9093,3@kafka-3:9093"
+  KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+  KAFKA_INTER_BROKER_LISTENER_NAME: "INTERNAL"
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT"
+  KAFKA_HEAP_OPTS: "-Xms512m -Xmx512m"
+  # Значения по умолчанию для новых топиков и безопасность
+  KAFKA_NUM_PARTITIONS: "3"
+  KAFKA_DEFAULT_REPLICATION_FACTOR: "3"
+  KAFKA_MIN_INSYNC_REPLICAS: "2"
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+  KAFKA_UNCLEAN_LEADER_ELECTION_ENABLE: "false"
+  # Служебные топики
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "3"
+  KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: "10"
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "3"
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "2"
+  KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS: "5"
+  KAFKA_SHARE_COORDINATOR_STATE_TOPIC_REPLICATION_FACTOR: "3"
+  KAFKA_SHARE_COORDINATOR_STATE_TOPIC_MIN_ISR: "2"
+  # Ускоренные таймауты, чтобы эффекты сбоев было видно за секунды, а не минуты
+  KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: "0"
+  KAFKA_REPLICA_LAG_TIME_MAX_MS: "10000"          # follower выпадает из ISR, если отстал > 10 c
+  KAFKA_BROKER_SESSION_TIMEOUT_MS: "9000"         # контроллер фенсит брокер без heartbeat > 9 c
+  KAFKA_BROKER_HEARTBEAT_INTERVAL_MS: "2000"
+  KAFKA_AUTO_LEADER_REBALANCE_ENABLE: "true"      # возвращать лидерство «предпочтительным» репликам
+  KAFKA_LEADER_IMBALANCE_CHECK_INTERVAL_SECONDS: "30"
+  # Новый протокол consumer group (KIP-848): таймауты задаёт брокер
+  KAFKA_GROUP_CONSUMER_MIN_SESSION_TIMEOUT_MS: "6000"
+  KAFKA_GROUP_CONSUMER_SESSION_TIMEOUT_MS: "10000"
+  KAFKA_GROUP_CONSUMER_MIN_HEARTBEAT_INTERVAL_MS: "1000"
+  KAFKA_GROUP_CONSUMER_HEARTBEAT_INTERVAL_MS: "2000"
+  # Данные демо не нужны долго
+  KAFKA_LOG_RETENTION_HOURS: "2"
+  KAFKA_LOG_SEGMENT_BYTES: "67108864"
+  KAFKA_LOG_CLEANER_BACKOFF_MS: "5000"
+  # Данные на именованном томе: пересоздание контейнера не стирает топики (стереть: docker compose down -v)
+  KAFKA_LOG_DIRS: "/var/lib/kafka/data"
+
+x-app-base: &app-base
+  networks: [kafka-net]
+  restart: "no"
+  depends_on:
+    kafka-init:
+      condition: service_completed_successfully
+
+services:
+  # ---------- Кластер Kafka: 3 узла ----------
+  kafka-1:
+    <<: *kafka-base
+    container_name: kafka-1
+    hostname: kafka-1
+    pull_policy: missing
+    build:
+      context: ./infra/kafka
+    ports: ["19092:19092"]
+    volumes: ["kafka-1-data:/var/lib/kafka/data"]
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "1"
+      KAFKA_LISTENERS: "INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:19092"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka-1:9092,EXTERNAL://localhost:19092"
+
+  kafka-2:
+    <<: *kafka-base
+    container_name: kafka-2
+    hostname: kafka-2
+    ports: ["19093:19093"]
+    volumes: ["kafka-2-data:/var/lib/kafka/data"]
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "2"
+      KAFKA_LISTENERS: "INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:19093"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka-2:9092,EXTERNAL://localhost:19093"
+
+  kafka-3:
+    <<: *kafka-base
+    container_name: kafka-3
+    hostname: kafka-3
+    ports: ["19094:19094"]
+    volumes: ["kafka-3-data:/var/lib/kafka/data"]
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: "3"
+      KAFKA_LISTENERS: "INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:19094"
+      KAFKA_ADVERTISED_LISTENERS: "INTERNAL://kafka-3:9092,EXTERNAL://localhost:19094"
+
+  # Одноразовый контейнер: ждёт брокеры и создаёт топики (infra/kafka/create-topics.sh)
+  kafka-init:
+    image: kafka-lab/kafka:4.1.0
+    pull_policy: never
+    networks: [kafka-net]
+    restart: "no"
+    entrypoint: ["/opt/lab/create-topics.sh"]
+    depends_on:
+      kafka-1: { condition: service_healthy }
+      kafka-2: { condition: service_healthy }
+      kafka-3: { condition: service_healthy }
+
+  # ---------- Сервисы ----------
+  # C# producer: генерирует заказы (topic orders) и профили клиентов (customer-profiles)
+  order-service:
+    <<: *app-base
+    build: ./services/order-service
+    image: kafka-lab/order-service
+    ports: ["8081:8080"]
+    environment:
+      Kafka__BootstrapServers: "kafka-1:9092,kafka-2:9092,kafka-3:9092"
+
+  # C# consumer group "order-processing": N консюмеров в одном процессе, пишет в payments и orders.dlq
+  order-processor:
+    <<: *app-base
+    build: ./services/order-processor
+    image: kafka-lab/order-processor
+    ports: ["8082:8080"]
+    environment:
+      Kafka__BootstrapServers: "kafka-1:9092,kafka-2:9092,kafka-3:9092"
+
+  # Python consumer group "analytics": читает orders, payments, clickstream.
+  # Можно масштабировать: docker compose up -d --scale analytics=3
+  analytics:
+    <<: *app-base
+    build: ./services/analytics
+    image: kafka-lab/analytics
+    environment:
+      KAFKA_BOOTSTRAP: "kafka-1:9092,kafka-2:9092,kafka-3:9092"
+
+  # Go producer: высоконагруженный поток кликов (topic clickstream)
+  clickstream-generator:
+    <<: *app-base
+    build: ./services/clickstream-generator
+    image: kafka-lab/clickstream-generator
+    ports: ["8084:8080"]
+    environment:
+      KAFKA_BOOTSTRAP: "kafka-1:9092,kafka-2:9092,kafka-3:9092"
+
+  # C# control-center: мониторинг кластера (AdminClient), управление Docker (сбои), UI на :8080
+  control-center:
+    build: ./services/control-center
+    image: kafka-lab/control-center
+    container_name: control-center
+    networks: [kafka-net]
+    restart: "no"
+    ports: ["8080:8080"]
+    environment:
+      Lab__BootstrapServers: "kafka-1:9092,kafka-2:9092,kafka-3:9092"
+      Lab__ComposeProject: "kafka-lab"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./docs:/app/docs:ro
+      # UI монтируется с хоста: правишь HTML/JS — обновляешь страницу, пересборка не нужна
+      - ./services/control-center/wwwroot:/app/wwwroot:ro
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+  # ---------- Опционально: веб-UI для просмотра топиков и сообщений ----------
+  kafka-ui:
+    image: ghcr.io/kafbat/kafka-ui:latest
+    profiles: ["ui"]
+    networks: [kafka-net]
+    ports: ["8090:8080"]
+    environment:
+      KAFKA_CLUSTERS_0_NAME: "kafka-lab"
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: "kafka-1:9092,kafka-2:9092,kafka-3:9092"
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+
+networks:
+  kafka-net:
+    name: kafka-lab-net
+
+volumes:
+  kafka-1-data:
+  kafka-2-data:
+  kafka-3-data:

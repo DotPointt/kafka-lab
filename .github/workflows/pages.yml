@@ -1,0 +1,76 @@
+# Публикует статическую копию Kafka Lab на GitHub Pages:
+#   • «Памятки» и «Карточки» работают полностью;
+#   • «Живая схема» проигрывает запись реального стенда (demo/recording.json, см. tools/record-demo.py),
+#     потому что на Pages нет бэкенда (Kafka, control-center, Docker).
+#
+# Один раз в настройках репозитория: Settings → Pages → Build and deployment → Source: GitHub Actions.
+name: Publish site to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'services/control-center/wwwroot/**'
+      - 'docs/**'
+      - 'demo/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Собрать статический сайт
+        run: |
+          set -euo pipefail
+          mkdir -p _site/api _site/docs _site/demo
+          cp -r services/control-center/wwwroot/. _site/
+          cp docs/*.md docs/*.png _site/docs/
+          cp demo/recording.json _site/demo/
+
+          # Демо-режим: UI проигрывает запись вместо живого стрима control-center
+          cat > _site/config.js <<EOF
+          window.KAFKA_LAB = { mode: 'demo', repo: '${{ github.server_url }}/${{ github.repository }}' };
+          EOF
+
+          # Список памяток (на локальном стенде его отдаёт control-center: GET api/docs)
+          python3 - <<'PY'
+          import json, pathlib
+          docs = []
+          for f in sorted(pathlib.Path('docs').glob('*.md')):
+              lines = f.read_text(encoding='utf-8').splitlines()
+              title = next((l[2:].strip() for l in lines if l.startswith('# ')), f.stem)
+              docs.append({'file': f.name, 'title': title})
+          pathlib.Path('_site/api/docs.json').write_text(json.dumps(docs, ensure_ascii=False), encoding='utf-8')
+          print(f'Памяток: {len(docs)}')
+          PY
+
+          du -sh _site
+          find _site -maxdepth 2 | sort
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
