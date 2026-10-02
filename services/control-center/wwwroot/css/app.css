@@ -446,6 +446,16 @@ table.grid tr:hover td { background: rgba(122,162,247,.04); }
 .cards-list summary { cursor: pointer; font-weight: 600; }
 .cards-list .a { margin-top: 6px; color: var(--text-2); }
 
+/* ---------- footer ---------- */
+.site-footer {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px 10px;
+  padding: 14px 16px 18px; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: 12px;
+}
+.site-footer a { display: inline-flex; align-items: center; gap: 5px; color: var(--text-2); text-decoration: none; }
+.site-footer a:hover { color: var(--accent-2); text-decoration: underline; }
+.site-footer .sep { color: var(--border-2); }
+
 /* ---------- intro modal ---------- */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 120;
