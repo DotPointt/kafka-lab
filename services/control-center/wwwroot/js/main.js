@@ -1,5 +1,6 @@
-// Точка входа UI.
+// UI entry point.
 import { $, $$, initTooltips } from './util.js';
+import { applyStatic } from './i18n.js';
 import { store } from './store.js';
 import { connectStream } from './api.js';
 import { initLive } from './live.js';
@@ -9,6 +10,7 @@ import { initPartitions, initMessages, initEvents, initSubtabs, renderHealth, he
 import { initScenarios, openScenarios } from './scenarios.js';
 import { initDocs, showDocs } from './docs.js';
 import { initCards, showCards } from './flashcards.js';
+import { initIntro } from './intro.js';
 
 function initTabs() {
   const open = name => {
@@ -28,6 +30,7 @@ function initTabs() {
   return open;
 }
 
+applyStatic();
 initTooltips();
 const openTab = initTabs();
 initLive();
@@ -40,6 +43,7 @@ initSubtabs();
 initScenarios(openTab);
 initDocs();
 initCards();
+initIntro(openTab);
 
 store.onSnapshot(renderHealth);
 $('#btn-heal').addEventListener('click', heal);

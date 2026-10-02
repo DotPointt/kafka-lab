@@ -67,6 +67,9 @@ public sealed class ConsumerWorker
             stuck
                 ? $"{ClientId} завис (не вызывает Consume). Через max.poll.interval.ms={_consumerSettings.MaxPollIntervalMs} мс он сам выйдет из группы"
                 : $"{ClientId} отвис и продолжает Consume()",
+            stuck
+                ? $"{ClientId} is stuck (doesn't call Consume). After max.poll.interval.ms={_consumerSettings.MaxPollIntervalMs} ms it leaves the group by itself"
+                : $"{ClientId} is unstuck and calls Consume() again",
             "max-poll-interval");
     }
 
@@ -126,30 +129,38 @@ public sealed class ConsumerWorker
                     Interlocked.Increment(ref _rebalances);
                     _memberId = c.MemberId;
                     if (parts.Count > 0)
-                        _ctx.Log.Add("info", $"{ClientId}: назначены партиции [{Fmt(parts)}] → теперь [{AssignedText()}]", "rebalance");
+                        _ctx.Log.Add("info",
+                            $"{ClientId}: назначены партиции [{Fmt(parts)}] → теперь [{AssignedText()}]",
+                            $"{ClientId}: assigned partitions [{Fmt(parts)}] → now [{AssignedText()}]", "rebalance");
                 })
                 .SetPartitionsRevokedHandler((_, parts) =>
                 {
                     lock (_lock) foreach (var p in parts) { _assigned.Remove(p.Partition.Value); _positions.Remove(p.Partition.Value); }
-                    _ctx.Log.Add("info", $"{ClientId}: отозваны партиции [{Fmt(parts.Select(p => p.TopicPartition))}] (offset-ы коммитятся перед отдачей)", "rebalance");
+                    _ctx.Log.Add("info",
+                        $"{ClientId}: отозваны партиции [{Fmt(parts.Select(p => p.TopicPartition))}] (offset-ы коммитятся перед отдачей)",
+                        $"{ClientId}: revoked partitions [{Fmt(parts.Select(p => p.TopicPartition))}] (offsets are committed before handing them over)", "rebalance");
                 })
                 .SetPartitionsLostHandler((_, parts) =>
                 {
                     lock (_lock) foreach (var p in parts) { _assigned.Remove(p.Partition.Value); _positions.Remove(p.Partition.Value); }
-                    _ctx.Log.Add("warn", $"{ClientId}: партиции ПОТЕРЯНЫ [{Fmt(parts.Select(p => p.TopicPartition))}] — консюмер выкинут из группы, коммит невозможен", "max-poll-interval");
+                    _ctx.Log.Add("warn",
+                        $"{ClientId}: партиции ПОТЕРЯНЫ [{Fmt(parts.Select(p => p.TopicPartition))}] — консюмер выкинут из группы, коммит невозможен",
+                        $"{ClientId}: partitions LOST [{Fmt(parts.Select(p => p.TopicPartition))}] — the consumer was kicked out of the group, it can't commit", "max-poll-interval");
                 })
                 .SetErrorHandler((_, e) => { _lastError = e.Reason; })
                 .SetLogHandler((_, m) =>
                 {
                     if (m.Message.Contains("max.poll.interval.ms", StringComparison.OrdinalIgnoreCase))
-                        _ctx.Log.Add("warn", $"{ClientId}: {m.Message}", "max-poll-interval", "maxpoll-" + Id, 3000);
+                        _ctx.Log.Add("warn", $"{ClientId}: {m.Message}", $"{ClientId}: {m.Message}", "max-poll-interval", "maxpoll-" + Id, 3000);
                 })
                 .Build();
 
             consumer.Subscribe(_ctx.Kafka.OrdersTopic);
             _state = "running";
-            _ctx.Log.Add("info", $"{ClientId} запущен и подписался на {_ctx.Kafka.OrdersTopic} (стратегия: {_consumerSettings.AssignmentStrategy}" +
-                                 (_consumerSettings.StaticMembership ? ", static membership" : "") + ")", "consumer-group");
+            var mode = _consumerSettings.AssignmentStrategy + (_consumerSettings.StaticMembership ? ", static membership" : "");
+            _ctx.Log.Add("info",
+                $"{ClientId} запущен и подписался на {_ctx.Kafka.OrdersTopic} (стратегия: {mode})",
+                $"{ClientId} started and subscribed to {_ctx.Kafka.OrdersTopic} (strategy: {mode})", "consumer-group");
 
             while (!_stop)
             {
@@ -170,7 +181,9 @@ public sealed class ConsumerWorker
                 {
                     _lastError = ex.Error.Reason;
                     if (ex.Error.Code == ErrorCode.Local_MaxPollExceeded)
-                        _ctx.Log.Add("warn", $"{ClientId}: превышен max.poll.interval.ms — консюмер покинул группу и вступит заново", "max-poll-interval");
+                        _ctx.Log.Add("warn",
+                            $"{ClientId}: превышен max.poll.interval.ms — консюмер покинул группу и вступит заново",
+                            $"{ClientId}: max.poll.interval.ms exceeded — the consumer left the group and will rejoin", "max-poll-interval");
                     continue;
                 }
                 if (cr?.Message is null) continue;
@@ -190,8 +203,11 @@ public sealed class ConsumerWorker
             if (_crash)
             {
                 _state = "crashed";
-                _ctx.Log.Add("error", $"{ClientId} УПАЛ (имитация kill -9): offset-ы последних {_consumerSettings.AutoCommitIntervalMs} мс не закоммичены, " +
-                                      $"LeaveGroup не отправлен. Координатор заметит пропажу через session.timeout.ms={_consumerSettings.SessionTimeoutMs} мс", "consumer-crash");
+                _ctx.Log.Add("error",
+                    $"{ClientId} УПАЛ (имитация kill -9): offset-ы последних {_consumerSettings.AutoCommitIntervalMs} мс не закоммичены, " +
+                    $"LeaveGroup не отправлен. Координатор заметит пропажу через session.timeout.ms={_consumerSettings.SessionTimeoutMs} мс",
+                    $"{ClientId} CRASHED (simulated kill -9): offsets of the last {_consumerSettings.AutoCommitIntervalMs} ms are not committed, " +
+                    $"no LeaveGroup sent. The coordinator notices only after session.timeout.ms={_consumerSettings.SessionTimeoutMs} ms", "consumer-crash");
                 // Dispose() без Close(): librdkafka уничтожается без commit и без LeaveGroup.
                 consumer.Dispose();
             }
@@ -200,14 +216,16 @@ public sealed class ConsumerWorker
                 consumer.Close(); // commit сохранённых offset-ов + LeaveGroup
                 consumer.Dispose();
                 _state = "stopped";
-                _ctx.Log.Add("info", $"{ClientId} корректно остановлен: offset-ы закоммичены, LeaveGroup → ребаланс сразу", "rebalance");
+                _ctx.Log.Add("info",
+                    $"{ClientId} корректно остановлен: offset-ы закоммичены, LeaveGroup → ребаланс сразу",
+                    $"{ClientId} stopped gracefully: offsets committed, LeaveGroup → immediate rebalance", "rebalance");
             }
         }
         catch (Exception ex)
         {
             _state = "failed";
             _lastError = ex.Message;
-            _ctx.Log.Add("error", $"{ClientId}: {ex.Message}");
+            _ctx.Log.Add("error", $"{ClientId}: {ex.Message}", $"{ClientId}: {ex.Message}");
             try { consumer?.Dispose(); } catch { }
         }
         finally
@@ -234,15 +252,19 @@ public sealed class ConsumerWorker
             // Poison pill: сообщение невозможно разобрать — ретраи бессмысленны, сразу в DLQ.
             Interlocked.Increment(ref _dlq);
             _ctx.SendToDlq(cr, $"poison pill: {ex.Message}", ClientId, 1);
-            _ctx.Log.Add("warn", $"{ClientId}: poison pill в orders-{cr.Partition.Value}@{cr.Offset.Value} ({ex.Message}) → orders.dlq", "dlq", "poison-" + Id, 2000);
+            _ctx.Log.Add("warn",
+                $"{ClientId}: poison pill в orders-{cr.Partition.Value}@{cr.Offset.Value} ({ex.Message}) → orders.dlq",
+                $"{ClientId}: poison pill at orders-{cr.Partition.Value}@{cr.Offset.Value} ({ex.Message}) → orders.dlq", "dlq", "poison-" + Id, 2000);
             return;
         }
 
         if (!_ctx.Registry.TryMark(order.OrderId))
         {
             Interlocked.Increment(ref _duplicates);
-            _ctx.Log.Add("warn", $"{ClientId}: заказ {order.OrderId} уже обрабатывали — повторная доставка (at-least-once). " +
-                                 "Нужна идемпотентная обработка!", "at-least-once", "dup-" + Id, 3000);
+            _ctx.Log.Add("warn",
+                $"{ClientId}: заказ {order.OrderId} уже обрабатывали — повторная доставка (at-least-once). Нужна идемпотентная обработка!",
+                $"{ClientId}: order {order.OrderId} was already processed — redelivery (at-least-once). Processing must be idempotent!",
+                "at-least-once", "dup-" + Id, 3000);
         }
 
         var attempt = 0;
@@ -259,7 +281,9 @@ public sealed class ConsumerWorker
                 Interlocked.Increment(ref _failed);
                 Interlocked.Increment(ref _dlq);
                 _ctx.SendToDlq(cr, "processing failed after retries (simulated)", ClientId, attempt);
-                _ctx.Log.Add("warn", $"{ClientId}: {order.OrderId} не обработан за {attempt} попыток → orders.dlq", "dlq", "dlq-" + Id, 3000);
+                _ctx.Log.Add("warn",
+                    $"{ClientId}: {order.OrderId} не обработан за {attempt} попыток → orders.dlq",
+                    $"{ClientId}: {order.OrderId} failed after {attempt} attempts → orders.dlq", "dlq", "dlq-" + Id, 3000);
                 Processed.Add();
                 return;
             }

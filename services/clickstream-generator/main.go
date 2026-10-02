@@ -153,7 +153,8 @@ type Event struct {
 	ID    int64  `json:"id"`
 	Ts    int64  `json:"ts"`
 	Level string `json:"level"`
-	Text  string `json:"text"`
+	Text   string `json:"text"`   // по-русски
+	TextEn string `json:"textEn"` // по-английски
 	Learn string `json:"learn,omitempty"`
 }
 
@@ -164,7 +165,8 @@ type EventLog struct {
 	throttle map[string]time.Time
 }
 
-func (e *EventLog) Add(level, text, learn, key string, every time.Duration) {
+// Add пишет событие на двух языках: text — по-русски, textEn — по-английски.
+func (e *EventLog) Add(level, text, textEn, learn, key string, every time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if key != "" {
@@ -174,7 +176,7 @@ func (e *EventLog) Add(level, text, learn, key string, every time.Duration) {
 		e.throttle[key] = time.Now()
 	}
 	e.nextID++
-	e.events = append(e.events, Event{ID: e.nextID, Ts: time.Now().UnixMilli(), Level: level, Text: text, Learn: learn})
+	e.events = append(e.events, Event{ID: e.nextID, Ts: time.Now().UnixMilli(), Level: level, Text: text, TextEn: textEn, Learn: learn})
 	if len(e.events) > 100 {
 		e.events = e.events[len(e.events)-100:]
 	}
@@ -285,7 +287,8 @@ func (g *Generator) apply(next Config) error {
 			_ = oldClient.Flush(fctx) // дождаться подтверждения уже отправленного
 			oldClient.Close()
 		}()
-		g.events.Add("info", fmt.Sprintf("Producer пересоздан: acks=%s, compression=%s, linger=%dms", next.Acks, next.Compression, next.LingerMs), "producer-config", "", 0)
+		cfg := fmt.Sprintf("acks=%s, compression=%s, linger=%dms", next.Acks, next.Compression, next.LingerMs)
+		g.events.Add("info", "Producer пересоздан: "+cfg, "Producer recreated: "+cfg, "producer-config", "", 0)
 	}
 	go g.loop(ctx, client)
 	return nil
@@ -355,7 +358,10 @@ func (g *Generator) loop(ctx context.Context, client *kgo.Client) {
 				if client.BufferedProduceRecords() >= maxBuffered {
 					// Буфер producer-а полон: брокеры не успевают подтверждать (или недоступны).
 					g.bufferFull.Add(1)
-					g.events.Add("warn", fmt.Sprintf("Буфер producer-а заполнен (%d записей): брокеры не успевают — генератор притормаживает (backpressure)", maxBuffered), "backpressure", "buffer-full", 10*time.Second)
+					g.events.Add("warn",
+						fmt.Sprintf("Буфер producer-а заполнен (%d записей): брокеры не успевают — генератор притормаживает (backpressure)", maxBuffered),
+						fmt.Sprintf("The producer buffer is full (%d records): brokers can't keep up — the generator slows down (backpressure)", maxBuffered),
+						"backpressure", "buffer-full", 10*time.Second)
 					budget = 0
 					break
 				}
@@ -392,7 +398,7 @@ func (g *Generator) onDelivery(r *kgo.Record, err error) {
 		case strings.Contains(msg, "NOT_ENOUGH_REPLICAS"):
 			learn = "min-isr"
 		}
-		g.events.Add("error", "Доставка не удалась: "+msg, learn, "err:"+msg, 5*time.Second)
+		g.events.Add("error", "Доставка не удалась: "+msg, "Delivery failed: "+msg, learn, "err:"+msg, 5*time.Second)
 		return
 	}
 	g.acked.Add(1)
@@ -474,7 +480,7 @@ func main() {
 	if err := g.apply(g.cfg); err != nil {
 		log.Fatalf("kafka client: %v", err)
 	}
-	g.events.Add("info", "clickstream-generator запущен, bootstrap: "+bootstrap, "", "", 0)
+	g.events.Add("info", "clickstream-generator запущен, bootstrap: "+bootstrap, "clickstream-generator started, bootstrap: "+bootstrap, "", "", 0)
 
 	http.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, map[string]bool{"ok": true}) })
 	http.HandleFunc("/api/stats", func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, 200, g.stats()) })

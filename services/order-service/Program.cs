@@ -26,6 +26,7 @@ app.MapPost("/api/burst", (OrderProducer p, BurstRequest req) => p.Burst(req.Cou
 app.MapDelete("/api/profiles/{customerId}", (OrderProducer p, string customerId) => p.DeleteProfileAsync(customerId));
 
 app.Lifetime.ApplicationStarted.Register(() =>
-    app.Services.GetRequiredService<LabLog>().Add("info", $"order-service запущен, bootstrap: {kafka.BootstrapServers}"));
+    app.Services.GetRequiredService<LabLog>().Add("info", $"order-service запущен, bootstrap: {kafka.BootstrapServers}",
+        $"order-service started, bootstrap: {kafka.BootstrapServers}"));
 
 app.Run();

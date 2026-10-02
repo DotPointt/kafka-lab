@@ -82,7 +82,9 @@ public sealed class DeliveryVerifier(KafkaOptions kafka, LabLog log) : Backgroun
             {
                 _duplicates++;
                 AddSample(_dupSamples, new { orderId, first = $"{prev.P}@{prev.O}", second = $"{partition}@{offset}" });
-                log.Add("warn", $"Дубликат в логе: {orderId} записан дважды (orders-{prev.P}@{prev.O} и orders-{partition}@{offset}) — ретрай producer без идемпотентности",
+                log.Add("warn",
+                    $"Дубликат в логе: {orderId} записан дважды (orders-{prev.P}@{prev.O} и orders-{partition}@{offset}) — ретрай producer без идемпотентности",
+                    $"Duplicate in the log: {orderId} was written twice (orders-{prev.P}@{prev.O} and orders-{partition}@{offset}) — a producer retry without idempotence",
                     "idempotence", "dup-in-log", 3000);
             }
             else
@@ -104,7 +106,9 @@ public sealed class DeliveryVerifier(KafkaOptions kafka, LabLog log) : Backgroun
         AddSample(_lostSamples, new { orderId = acked, partition = key.P, offset = key.O, replacedBy = inLog });
         log.Add("error",
             $"ПОТЕРЯ ДАННЫХ: заказ {acked} был подтверждён брокером (orders-{key.P}@{key.O}), но теперь по этому offset лежит {inLog}. " +
-            "Лог старого лидера обрезали после выборов нового лидера.", "data-loss", "lost", 3000);
+            "Лог старого лидера обрезали после выборов нового лидера.",
+            $"DATA LOSS: order {acked} was acknowledged by the broker (orders-{key.P}@{key.O}), but that offset now holds {inLog}. " +
+            "The old leader's log was truncated after a new leader was elected.", "data-loss", "lost", 3000);
     }
 
     private static void AddSample(LinkedList<object> list, object sample)
@@ -131,7 +135,9 @@ public sealed class DeliveryVerifier(KafkaOptions kafka, LabLog log) : Backgroun
                     _pending.Remove(key);
                     _unconfirmedTimeout++;
                     AddSample(_lostSamples, new { orderId = p.OrderId, partition = key.P, offset = key.O, replacedBy = (string?)null });
-                    log.Add("error", $"Заказ {p.OrderId} подтверждён (orders-{key.P}@{key.O}), но не найден в логе за 2 минуты — вероятно потерян",
+                    log.Add("error",
+                        $"Заказ {p.OrderId} подтверждён (orders-{key.P}@{key.O}), но не найден в логе за 2 минуты — вероятно потерян",
+                        $"Order {p.OrderId} was acknowledged (orders-{key.P}@{key.O}) but not found in the log within 2 minutes — probably lost",
                         "data-loss", "unconfirmed", 5000);
                 }
             }

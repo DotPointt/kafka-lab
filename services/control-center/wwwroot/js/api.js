@@ -2,6 +2,7 @@
 // Пути относительные: UI работает и в корне (локальный стенд), и в подкаталоге (GitHub Pages: /kafka-lab/).
 import { toast } from './util.js';
 import { store } from './store.js';
+import { T, isRu } from './i18n.js';
 
 /** Демо-режим: статическая копия сайта (GitHub Pages) проигрывает запись реального стенда — бэкенда нет. */
 export const DEMO = window.KAFKA_LAB?.mode === 'demo';
@@ -11,7 +12,8 @@ let demoMessages = null; // записанные сообщения топико
 export function setDemoMessages(messages) { demoMessages = messages; }
 
 export function demoNotice() {
-  toast('Это запись реального стенда: управлять кластером можно только на локальном стенде (docker compose up -d --build).', 'info', 6000);
+  toast(T('This is a recording of the real lab: you can control the cluster only in the local lab (docker compose up -d --build).',
+    'Это запись реального стенда: управлять кластером можно только на локальном стенде (docker compose up -d --build).'), 'info', 6000);
 }
 
 /** В демо-режиме показывает подсказку и возвращает true — действие выполнять не нужно. */
@@ -32,13 +34,13 @@ export async function api(method, url, body, { quiet = false } = {}) {
     let data = null;
     try { data = await r.json(); } catch { /* пустой ответ */ }
     if (!r.ok || (data && data.ok === false)) {
-      const msg = data?.error || data?.reason || `${r.status} ${r.statusText}`;
+      const msg = (isRu ? data?.error : (data?.errorEn ?? data?.error)) || data?.reason || `${r.status} ${r.statusText}`;
       if (!quiet) toast(msg, 'err', 7000);
       return data ?? { ok: false, error: msg };
     }
     return data ?? { ok: true };
   } catch (e) {
-    if (!quiet) toast(`Сеть: ${e.message}`, 'err');
+    if (!quiet) toast(`${T('Network', 'Сеть')}: ${e.message}`, 'err');
     return { ok: false, error: e.message };
   }
 }
@@ -92,14 +94,14 @@ export function connectStream() {
     es.addEventListener('snapshot', e => {
       store.connected = true;
       conn.className = 'conn on';
-      conn.title = 'Соединение с control-center: OK';
+      conn.title = T('Connected to control-center', 'Соединение с control-center: OK');
       store.setSnapshot(JSON.parse(e.data));
     });
     es.addEventListener('events', e => store.addEvents(JSON.parse(e.data)));
     es.onerror = () => {
       store.connected = false;
       conn.className = 'conn off';
-      conn.title = 'Нет соединения с control-center — переподключаемся…';
+      conn.title = T('No connection to control-center — reconnecting…', 'Нет соединения с control-center — переподключаемся…');
       es.close();
       setTimeout(open, 2000);
     };

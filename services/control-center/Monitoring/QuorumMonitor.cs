@@ -27,7 +27,7 @@ public sealed class QuorumMonitor(DockerApi docker, SnapshotHub hub, LabOptions 
             catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 logger.LogDebug(ex, "quorum poll failed");
-                Latest = new QuorumInfo { Error = ex.Message, UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), LeaderId = Latest?.LeaderId, Voters = Latest?.Voters ?? [] };
+                Latest = new QuorumInfo { Error = ex.Message, ErrorEn = ex.Message, UpdatedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), LeaderId = Latest?.LeaderId, Voters = Latest?.Voters ?? [] };
             }
             // JVM-утилита под нагрузкой стартует несколько секунд — запускаем следующую сразу после предыдущей
             await Task.Delay(TimeSpan.FromSeconds(2), ct);
@@ -46,7 +46,7 @@ public sealed class QuorumMonitor(DockerApi docker, SnapshotHub hub, LabOptions 
             .ToList();
         if (candidates.Count == 0)
         {
-            Latest = new QuorumInfo { Error = "Нет доступного брокера для запроса", UpdatedAt = Now };
+            Latest = new QuorumInfo { Error = "Нет доступного брокера для запроса", ErrorEn = "No broker available to query", UpdatedAt = Now };
             return;
         }
 
@@ -65,6 +65,7 @@ public sealed class QuorumMonitor(DockerApi docker, SnapshotHub hub, LabOptions 
             Latest = new QuorumInfo
             {
                 Error = "Кворум не ответил (нет лидера или нет большинства контроллеров)",
+                ErrorEn = "The quorum did not answer (no leader or no majority of controllers)",
                 UpdatedAt = Now,
                 SourceBroker = target.Def.Id,
             };

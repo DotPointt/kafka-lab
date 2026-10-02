@@ -84,13 +84,13 @@ public sealed class OrderProducer : IDisposable
             .SetStatisticsHandler((_, json) => OnStatistics(json))
             .SetErrorHandler((p, e) =>
             {
-                _log.Add(e.IsFatal ? "error" : "warn", $"librdkafka: {e.Reason}", LearnFor(e.Code), "client-error:" + e.Code, 8000);
+                _log.Add(e.IsFatal ? "error" : "warn", $"librdkafka: {e.Reason}", $"librdkafka: {e.Reason}", LearnFor(e.Code), "client-error:" + e.Code, 8000);
                 if (e.IsFatal) OnFatal(p, e);
             })
             .SetLogHandler((_, m) =>
             {
                 if (m.Level <= SyslogLevel.Warning)
-                    _log.Add("warn", $"librdkafka [{m.Facility}]: {m.Message}", null, "log:" + m.Facility, 8000);
+                    _log.Add("warn", $"librdkafka [{m.Facility}]: {m.Message}", $"librdkafka [{m.Facility}]: {m.Message}", null, "log:" + m.Facility, 8000);
             })
             .Build();
     }
@@ -136,11 +136,12 @@ public sealed class OrderProducer : IDisposable
         if (recreate)
         {
             Recreate(next);
+            var cfg = $"acks={next.Acks}, idempotence={(next.EnableIdempotence ? "on" : "off")}, linger={next.LingerMs}ms, " +
+                      $"compression={next.Compression}, request.timeout={next.RequestTimeoutMs}ms, delivery.timeout={next.DeliveryTimeoutMs}ms";
             _log.Add("info",
-                $"Producer пересоздан: acks={next.Acks}, idempotence={(next.EnableIdempotence ? "on" : "off")}, " +
-                $"linger={next.LingerMs}ms, compression={next.Compression}, request.timeout={next.RequestTimeoutMs}ms, " +
-                $"delivery.timeout={next.DeliveryTimeoutMs}ms. Сообщения, оставшиеся в буфере старого producer-а, " +
-                "будут выброшены (Local_PurgeQueue), если не успеют уйти", "producer-config");
+                $"Producer пересоздан: {cfg}. Сообщения, оставшиеся в буфере старого producer-а, будут выброшены (Local_PurgeQueue), если не успеют уйти",
+                $"Producer recreated: {cfg}. Messages still buffered in the old producer are dropped (Local_PurgeQueue) if they can't be sent in time",
+                "producer-config");
         }
         else
         {
@@ -184,8 +185,10 @@ public sealed class OrderProducer : IDisposable
         var now = Environment.TickCount64;
         if (now - Interlocked.Read(ref _lastFatalAt) < 5000) return;
         Interlocked.Exchange(ref _lastFatalAt, now);
-        _log.Add("error", $"Фатальная ошибка producer-а: {e.Reason}. Этот экземпляр больше не может отправлять — " +
-                          "создаём новый (новый ProducerId). Неотправленные сообщения старого будут потеряны для приложения", "fatal-producer");
+        _log.Add("error",
+            $"Фатальная ошибка producer-а: {e.Reason}. Этот экземпляр больше не может отправлять — создаём новый (новый ProducerId). Неотправленные сообщения старого будут потеряны для приложения",
+            $"Fatal producer error: {e.Reason}. This instance can't send anymore — creating a new one (new ProducerId). Unsent messages of the old one are lost to the application",
+            "fatal-producer");
         _ = Task.Run(() => Recreate(_settings, flushOld: false));
     }
 
@@ -215,7 +218,9 @@ public sealed class OrderProducer : IDisposable
         catch (ProduceException<string, string?> ex) when (ex.Error.Code == ErrorCode.Local_QueueFull)
         {
             Interlocked.Increment(ref _queueFull);
-            _log.Add("warn", "Локальный буфер producer переполнен (Local_QueueFull): брокеры не успевают подтверждать — генератор притормаживает (backpressure)",
+            _log.Add("warn",
+                "Локальный буфер producer переполнен (Local_QueueFull): брокеры не успевают подтверждать — генератор притормаживает (backpressure)",
+                "The producer's local buffer is full (Local_QueueFull): brokers can't acknowledge fast enough — the generator slows down (backpressure)",
                 "backpressure", "queue-full", 10000);
             return false;
         }
@@ -277,7 +282,9 @@ public sealed class OrderProducer : IDisposable
             Acked.Add();
             _verifier.OnAcked(dr.Partition.Value, dr.Offset.Value, order.OrderId);
             if (s.PublishProfiles) PublishProfile(producer, order);
-            _log.Add("info", $"Ручной заказ {order.OrderId}: ключ «{customer}» → партиция {dr.Partition.Value}, offset {dr.Offset.Value}", "key-partition");
+            _log.Add("info",
+                $"Ручной заказ {order.OrderId}: ключ «{customer}» → партиция {dr.Partition.Value}, offset {dr.Offset.Value}",
+                $"Manual order {order.OrderId}: key \"{customer}\" → partition {dr.Partition.Value}, offset {dr.Offset.Value}", "key-partition");
             return new
             {
                 ok = true, orderId = order.OrderId, key = customer, partition = dr.Partition.Value,
@@ -297,7 +304,7 @@ public sealed class OrderProducer : IDisposable
     public object Burst(int count)
     {
         count = Math.Clamp(count, 1, 1_000_000);
-        _log.Add("info", $"Burst: отправляем {count} заказов так быстро, как сможем", "batching");
+        _log.Add("info", $"Burst: отправляем {count} заказов так быстро, как сможем", $"Burst: sending {count} orders as fast as possible", "batching");
         _ = Task.Run(() =>
         {
             var sent = 0;
@@ -307,7 +314,8 @@ public sealed class OrderProducer : IDisposable
                 if (ProduceGenerated()) sent++;
                 else Thread.Sleep(5);
             }
-            _log.Add("info", $"Burst завершён: {sent} заказов поставлено в очередь за {sw.Elapsed.TotalSeconds:F1} c", "batching");
+            _log.Add("info", $"Burst завершён: {sent} заказов поставлено в очередь за {sw.Elapsed.TotalSeconds:F1} c",
+                $"Burst finished: {sent} orders queued in {sw.Elapsed.TotalSeconds:F1} s", "batching");
         });
         return new { accepted = count };
     }
@@ -319,7 +327,9 @@ public sealed class OrderProducer : IDisposable
         lock (_gate) producer = _producer;
         _profiles.TryRemove(customerId, out _);
         var dr = await producer.ProduceAsync(_kafka.ProfilesTopic, new Message<string, string?> { Key = customerId, Value = null });
-        _log.Add("info", $"Tombstone для {customerId} → customer-profiles[{dr.Partition.Value}]@{dr.Offset.Value}: после компакции ключ исчезнет", "compaction");
+        _log.Add("info",
+            $"Tombstone для {customerId} → customer-profiles[{dr.Partition.Value}]@{dr.Offset.Value}: после компакции ключ исчезнет",
+            $"Tombstone for {customerId} → customer-profiles[{dr.Partition.Value}]@{dr.Offset.Value}: the key disappears after compaction", "compaction");
         return new { ok = true, partition = dr.Partition.Value, offset = dr.Offset.Value };
     }
 
@@ -389,7 +399,9 @@ public sealed class OrderProducer : IDisposable
         _errorCounts.AddOrUpdate(name, 1, (_, v) => v + 1);
         _recentErrors.Enqueue(new { ts = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), code = name, reason, status = status?.ToString() });
         while (_recentErrors.Count > 10) _recentErrors.TryDequeue(out _);
-        _log.Add("error", $"Доставка не удалась: {name} — {reason}" + (status is null ? "" : $" (статус: {status})"),
+        _log.Add("error",
+            $"Доставка не удалась: {name} — {reason}" + (status is null ? "" : $" (статус: {status})"),
+            $"Delivery failed: {name} — {reason}" + (status is null ? "" : $" (status: {status})"),
             LearnFor(code), "delivery-error:" + name, 5000);
     }
 

@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Записывает демо для статической копии сайта (GitHub Pages).
+Records the demo for the static copy of the site (GitHub Pages).
 
-Подключается к SSE-стриму работающего control-center (http://localhost:8080/api/stream), по таймлайну
-выполняет действия (kill брокера, ребаланс, крэш консюмера...) и сохраняет НАСТОЯЩИЕ снимки кластера
-и журнал событий в demo/recording.json. На Pages UI проигрывает эту запись вместо живого стрима.
+Connects to the SSE stream of a running control-center (http://localhost:8080/api/stream), performs actions
+along a timeline (killing a broker, a rebalance, a consumer crash...) and saves REAL cluster snapshots
+and the event log to demo/recording.json. On Pages the UI replays this recording instead of the live stream.
+Annotations are stored in both UI languages: {"en": ..., "ru": ...}.
 
-    docker compose up -d --build        # стенд должен работать
-    python tools/record-demo.py         # ~4 минуты
+    docker compose up -d --build        # the lab must be running
+    python tools/record-demo.py         # ~4 minutes
 """
 
 import json
@@ -55,15 +56,20 @@ def busiest_broker(avoid_controller=True):
 state = {}
 
 
-def note(title, text):
+def note(title_en, title_ru, text_en, text_ru):
+    """An annotation on the demo timeline, in both UI languages."""
     t = round(time.time() - started_at, 1)
-    annotations.append({"t": t, "title": title, "text": text})
-    print(f"[{t:6.1f}s] {title}")
+    annotations.append({"t": t, "title": {"en": title_en, "ru": title_ru}, "text": {"en": text_en, "ru": text_ru}})
+    print(f"[{t:6.1f}s] {title_en}")
 
 
-# ---------------------------------------------------------------- сценарий записи
+# ---------------------------------------------------------------- the recording timeline
 def a_start():
-    note("Штатная работа",
+    note("Normal operation", "Штатная работа",
+         "order-service (C#) writes orders keyed by customer, clickstream-generator (Go) writes clicks. "
+         "The <b>order-processing</b> (C#) and <b>analytics</b> (Python) groups read them independently. "
+         "Particles: orders are yellow, payments green, clicks blue; thin particles between brokers are replication to followers. "
+         "Hover over the partition chips: the leader (filled), replicas in the ISR, the end of the log.",
          "order-service (C#) пишет заказы с ключом-клиентом, clickstream-generator (Go) — клики. "
          "Группа <b>order-processing</b> (C#) и <b>analytics</b> (Python) читают их независимо. "
          "Частицы: заказы — жёлтые, платежи — зелёные, клики — синие; тонкие частицы между брокерами — репликация на follower-ы. "
@@ -72,16 +78,21 @@ def a_start():
 
 def a_keys():
     results = [call("POST", "/api/svc/order-service/orders", {"customerId": "customer-007"}) for _ in range(3)]
-    parts = {r.get("partition") for r in results}
-    note("Ключ → партиция",
-         f"Три заказа с ключом customer-007 легли в одну и ту же партицию orders-{','.join(map(str, parts))}: "
+    parts = ",".join(map(str, {r.get("partition") for r in results}))
+    note("Key → partition", "Ключ → партиция",
+         f"Three orders with the key customer-007 landed in the same partition orders-{parts}: "
+         "partition = murmur2(key) % 6. That is why one customer's orders are always in order (see the event log).",
+         f"Три заказа с ключом customer-007 легли в одну и ту же партицию orders-{parts}: "
          "партиция = murmur2(key) % 6. Поэтому заказы одного клиента всегда упорядочены (см. журнал событий).")
 
 
 def a_kill():
     b = state["killed"] = busiest_broker()
     call("POST", f"/api/brokers/{b}/kill")
-    note(f"💥 Kill broker {b} (SIGKILL)",
+    note(f"💥 Kill broker {b} (SIGKILL)", f"💥 Kill broker {b} (SIGKILL)",
+         "The broker is killed without a controlled shutdown. For about 9 s (broker.session.timeout.ms) the KRaft controller still considers it alive — "
+         "the partitions it led are unavailable and order-service p99 spikes. Then the controller fences the broker, "
+         "elects new leaders from the ISR, the ISRs shrink and URP (under-replicated partitions) grows in the header.",
          "Брокер убит без controlled shutdown. Около 9 с (broker.session.timeout.ms) контроллер KRaft ещё считает его живым — "
          "партиции, где он был лидером, недоступны, p99 у order-service подскакивает. Затем контроллер фенсит брокер, "
          "выбирает новых лидеров из ISR, ISR сжимаются, в шапке растёт URP (under-replicated partitions).")
@@ -89,7 +100,9 @@ def a_kill():
 
 def a_add_consumer():
     call("POST", "/api/svc/order-processor/instances")
-    note("+1 консюмер в order-processing",
+    note("+1 consumer in order-processing", "+1 консюмер в order-processing",
+         "A new member joins the group → a rebalance. The cooperative-sticky strategy takes only some partitions "
+         "away from the old consumers; the rest keep being read without a pause.",
          "Новый участник вступает в группу → ребаланс. Стратегия cooperative-sticky забирает у старых консюмеров "
          "только часть партиций, остальные продолжают читаться без остановки.")
 
@@ -97,14 +110,19 @@ def a_add_consumer():
 def a_start_broker():
     b = state["killed"]
     call("POST", f"/api/brokers/{b}/start")
-    note(f"▶ Broker {b} снова запущен",
+    note(f"▶ Broker {b} is started again", f"▶ Broker {b} снова запущен",
+         "The broker loads its log from disk, catches up with the leaders (fetch) and rejoins the ISR — URP drops to 0. "
+         "It hasn't become a leader yet: that happens at the preferred leader election.",
          "Брокер поднимает лог с диска, догоняет лидеров (fetch) и возвращается в ISR — URP уходит в 0. "
          "Лидером он пока не стал: это произойдёт при выборах предпочтительных лидеров.")
 
 
 def a_preferred():
     call("POST", "/api/leaders/preferred")
-    note("⚖ Выборы предпочтительных лидеров",
+    note("⚖ Preferred leader election", "⚖ Выборы предпочтительных лидеров",
+         "Leadership goes back to the \"preferred\" replicas (the first in the replicas list), and the load is even again. "
+         "Often the controller gets there by itself — auto.leader.rebalance (every 30 s in the lab), and then a manual "
+         "kafka-leader-election run reports \"0 re-elected, N already in place\". See both events in the log.",
          "Лидерство возвращается к «предпочтительным» репликам (первым в списке replicas), и нагрузка снова равномерна. "
          "Часто контроллер успевает сам — auto.leader.rebalance (на стенде раз в 30 с), тогда ручной запуск "
          "kafka-leader-election покажет «переизбрано 0, уже на месте N». Смотри оба события в журнале.")
@@ -115,7 +133,11 @@ def a_crash_consumer():
     inst = (stats.get("instances") or [{}])[0]
     if inst.get("id") is not None:
         call("POST", f"/api/svc/order-processor/instances/{inst['id']}/crash")
-    note(f"💥 Крэш консюмера {inst.get('clientId', '')}",
+    client = inst.get("clientId", "")
+    note(f"💥 Consumer {client} crashed", f"💥 Крэш консюмера {client}",
+         "The consumer died without a commit and without LeaveGroup. For about 10 s it stays in the group as a \"ghost\" (session.timeout.ms), "
+         "and nobody reads its partitions. Then a rebalance, and the new owner re-reads the messages after the last commit — "
+         "the \"duplicates\" counter grows: this is what at-least-once looks like.",
          "Консюмер умер без коммита и без LeaveGroup. Около 10 с он остаётся в группе «призраком» (session.timeout.ms), "
          "его партиции никто не читает. Потом ребаланс, а новый владелец перечитывает сообщения после последнего коммита — "
          "растёт счётчик «дубли»: так выглядит at-least-once.")
@@ -123,28 +145,35 @@ def a_crash_consumer():
 
 def a_pause():
     call("PUT", "/api/svc/analytics/config", {"paused": True})
-    note("⏸ analytics: consumer.pause()",
+    note("⏸ analytics: consumer.pause()", "⏸ analytics: consumer.pause()",
+         "The Python consumer stopped fetching data but stays in the group. The analytics lag grows, while order-processing "
+         "keeps working as if nothing happened: every consumer group has its own offsets.",
          "Python-консюмер перестал забирать данные, но остаётся в группе. Lag группы analytics растёт, а order-processing "
          "работает как ни в чём не бывало: у каждой consumer group свои offset-ы.")
 
 
 def a_resume():
     call("PUT", "/api/svc/analytics/config", {"paused": False})
-    note("▶ analytics: resume()",
+    note("▶ analytics: resume()", "▶ analytics: resume()",
+         "The consumer continues from the same offset and catches up: its read rate is far above the write rate until the lag is gone.",
          "Консюмер продолжает с того же offset и догоняет поток: скорость чтения резко выше скорости записи, пока lag не уйдёт.")
 
 
 def a_latency():
     b = state["slow"] = busiest_broker(avoid_controller=False)
     call("POST", f"/api/brokers/{b}/network", {"latencyMs": 300, "jitterMs": 50, "lossPct": 0, "isolated": False, "splitFromBrokers": False})
-    note(f"🐢 Задержка сети 300 мс у broker {b}",
+    note(f"🐢 300 ms network latency on broker {b}", f"🐢 Задержка сети 300 мс у broker {b}",
+         "tc netem delays the broker's outgoing traffic. A producer with acks=all waits until the write reaches every ISR replica — "
+         "the acknowledgement latency (p99 in the order-service card) grows by hundreds of milliseconds.",
          "tc netem задерживает исходящий трафик брокера. Producer с acks=all ждёт, пока запись дойдёт до всех реплик ISR, — "
          "задержка подтверждения (p99 в карточке order-service) вырастает на сотни миллисекунд.")
 
 
 def a_heal():
     call("POST", f"/api/brokers/{state['slow']}/network", {"latencyMs": 0, "jitterMs": 0, "lossPct": 0, "isolated": False, "splitFromBrokers": False})
-    note("✚ Сеть восстановлена",
+    note("✚ Network restored", "✚ Сеть восстановлена",
+         "Acknowledgement latency is back to single-digit milliseconds. The recording ends here and will start over. "
+         "The Partitions, Charts and Messages tabs also work from this recording.",
          "Задержка подтверждений возвращается к единицам миллисекунд. Конец записи — дальше она начнётся сначала. "
          "Вкладки «Партиции», «Графики» и «Сообщения» тоже работают по этой записи.")
 
@@ -168,7 +197,7 @@ def run_timeline():
 
 
 def compact(snap):
-    """Убираем из снимка то, что UI не использует (списки событий сервисов, последние доставки)."""
+    """Strip what the UI doesn't use from a snapshot (service event lists, recent deliveries)."""
     for s in snap.get("services", []):
         for i in s.get("instances", []):
             st = i.get("stats")
@@ -181,7 +210,7 @@ def compact(snap):
 def main():
     global started_at
     frames, pending_events = [], []
-    print(f"Подключаемся к {BASE}/api/stream …")
+    print(f"Connecting to {BASE}/api/stream …")
     resp = urllib.request.urlopen(BASE + "/api/stream", timeout=30)
     event_type, data_lines = None, []
     started_at = None
@@ -212,7 +241,7 @@ def main():
                 pending_events.extend(payload)
             event_type, data_lines = None, []
 
-    print("Читаем последние сообщения топиков …")
+    print("Reading the latest topic messages …")
     messages = {}
     for t in [t["name"] for t in latest["snap"]["topics"] if not t["internal"]]:
         messages[t] = call("GET", f"/api/topics/{t}/messages?limit=30")
@@ -222,7 +251,7 @@ def main():
             "recordedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "durationSec": frames[-1]["t"],
             "frames": len(frames),
-            "note": "Настоящие снимки стенда Kafka Lab (control-center /api/stream), записаны tools/record-demo.py",
+            "note": "Real Kafka Lab snapshots (control-center /api/stream), recorded by tools/record-demo.py",
         },
         "annotations": annotations,
         "frames": frames,
@@ -231,7 +260,7 @@ def main():
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(recording, f, ensure_ascii=False, separators=(",", ":"))
-    print(f"Готово: {OUT} — {len(frames)} кадров, {os.path.getsize(OUT) / 1024 / 1024:.1f} MB")
+    print(f"Done: {OUT} — {len(frames)} frames, {os.path.getsize(OUT) / 1024 / 1024:.1f} MB")
 
 
 if __name__ == "__main__":

@@ -34,7 +34,8 @@ public sealed class ConsumerManager(ProcessorContext ctx) : IHostedService
         lock (_lock)
         {
             var active = _workers.Count(w => !w.Finished);
-            if (active >= ctx.Kafka.MaxInstances) return new { ok = false, error = $"Максимум {ctx.Kafka.MaxInstances} консюмеров" };
+            if (active >= ctx.Kafka.MaxInstances)
+                return new { ok = false, error = $"Максимум {ctx.Kafka.MaxInstances} консюмеров", errorEn = $"At most {ctx.Kafka.MaxInstances} consumers" };
             var newId = id ?? _nextId;
             while (id is null && _workers.Any(w => w.Id == newId)) newId++;
             if (id is null) _nextId = newId + 1;
@@ -68,7 +69,7 @@ public sealed class ConsumerManager(ProcessorContext ctx) : IHostedService
     public object Remove(int id)
     {
         var w = Find(id);
-        if (w is null) return new { ok = false, error = "нет такого консюмера" };
+        if (w is null) return new { ok = false, error = "нет такого консюмера", errorEn = "no such consumer" };
         w.StopGracefully();
         return new { ok = true };
     }
@@ -76,7 +77,7 @@ public sealed class ConsumerManager(ProcessorContext ctx) : IHostedService
     public object Crash(int id)
     {
         var w = Find(id);
-        if (w is null) return new { ok = false, error = "нет такого консюмера" };
+        if (w is null) return new { ok = false, error = "нет такого консюмера", errorEn = "no such consumer" };
         w.Crash();
         return new { ok = true };
     }
@@ -84,7 +85,7 @@ public sealed class ConsumerManager(ProcessorContext ctx) : IHostedService
     public object Stuck(int id, bool? stuck)
     {
         var w = Find(id);
-        if (w is null) return new { ok = false, error = "нет такого консюмера" };
+        if (w is null) return new { ok = false, error = "нет такого консюмера", errorEn = "no such consumer" };
         w.SetStuck(stuck ?? !w.IsStuck);
         return new { ok = true, stuck = w.IsStuck };
     }
@@ -93,14 +94,18 @@ public sealed class ConsumerManager(ProcessorContext ctx) : IHostedService
     public object Restart(int id)
     {
         var w = Find(id);
-        if (w is null) return new { ok = false, error = "нет такого консюмера" };
+        if (w is null) return new { ok = false, error = "нет такого консюмера", errorEn = "no such consumer" };
         w.Crash();
         _ = Task.Run(async () =>
         {
             w.Join(TimeSpan.FromSeconds(10));
             await Task.Delay(2000);
-            ctx.Log.Add("info", $"processor-{id} перезапускается через 2 c после падения" +
-                                (ctx.Settings.StaticMembership ? " — static membership: координатор узнаёт его по group.instance.id, ребаланса не будет" : " — без static membership это новый участник → ребаланс"),
+            var isStatic = ctx.Settings.StaticMembership;
+            ctx.Log.Add("info",
+                $"processor-{id} перезапускается через 2 c после падения" +
+                (isStatic ? " — static membership: координатор узнаёт его по group.instance.id, ребаланса не будет" : " — без static membership это новый участник → ребаланс"),
+                $"processor-{id} restarts 2 s after the crash" +
+                (isStatic ? " — static membership: the coordinator recognizes it by group.instance.id, no rebalance" : " — without static membership it's a new member → rebalance"),
                 "static-membership");
             lock (_lock) _workers.Remove(w);
             Start(id);
@@ -137,8 +142,11 @@ public sealed class ConsumerManager(ProcessorContext ctx) : IHostedService
         {
             List<ConsumerWorker> old;
             lock (_lock) old = _workers.Where(w => !w.Finished).ToList();
-            ctx.Log.Add("info", $"Конфигурация консюмеров изменена (стратегия: {next.AssignmentStrategy}, session.timeout={next.SessionTimeoutMs}, " +
-                                $"max.poll.interval={next.MaxPollIntervalMs}, auto.commit.interval={next.AutoCommitIntervalMs}, static={next.StaticMembership}) — перезапускаем {old.Count} консюмеров",
+            var cfg = $"session.timeout={next.SessionTimeoutMs}, max.poll.interval={next.MaxPollIntervalMs}, " +
+                      $"auto.commit.interval={next.AutoCommitIntervalMs}, static={next.StaticMembership}";
+            ctx.Log.Add("info",
+                $"Конфигурация консюмеров изменена (стратегия: {next.AssignmentStrategy}, {cfg}) — перезапускаем {old.Count} консюмеров",
+                $"Consumer config changed (strategy: {next.AssignmentStrategy}, {cfg}) — restarting {old.Count} consumers",
                 "consumer-group");
             _ = Task.Run(() =>
             {

@@ -14,7 +14,8 @@ using Microsoft.Extensions.FileProviders;
 //   • мониторит кластер через Kafka AdminClient и отдаёт снимок в браузер (SSE);
 //   • управляет контейнерами через Docker API (stop/kill/pause) и портит сеть брокеров через tc;
 //   • проксирует настройки сервисов (rate, acks, число консюмеров...);
-//   • раздаёт UI (wwwroot) и памятки (docs/*.md).
+//   • раздаёт UI (wwwroot) и памятки (docs/en/*.md, docs/ru/*.md).
+// Все события и ошибки — на двух языках (ru + en), UI показывает выбранный.
 
 var builder = WebApplication.CreateBuilder(args);
 var options = builder.Configuration.GetSection("Lab").Get<LabOptions>() ?? new LabOptions();
@@ -110,28 +111,42 @@ string[] containerActions = ["start", "stop", "kill", "pause", "unpause", "resta
 
 async Task<IResult> ContainerActionAsync(string name, string action, ClusterMonitor monitor, DockerApi docker, CancellationToken ct)
 {
-    if (!containerActions.Contains(action)) return Results.BadRequest(new { ok = false, error = $"Неизвестное действие {action}" });
+    if (!containerActions.Contains(action))
+        return Results.BadRequest(new Msg($"Неизвестное действие {action}", $"Unknown action {action}").Error());
     var containers = await monitor.RefreshContainersAsync(ct);
     var c = containers.FirstOrDefault(x => x.Name == name);
-    if (c is null) return Results.NotFound(new { ok = false, error = $"Контейнер {name} не найден" });
-    if (c.Service is "control-center" or "kafka-init") return Results.BadRequest(new { ok = false, error = "Этим контейнером управлять нельзя" });
+    if (c is null) return Results.NotFound(new Msg($"Контейнер {name} не найден", $"Container {name} not found").Error());
+    if (c.Service is "control-center" or "kafka-init")
+        return Results.BadRequest(new Msg("Этим контейнером управлять нельзя", "This container can't be controlled").Error());
 
     var isBroker = options.Brokers.Any(b => b.Container == name);
     var isConsumer = options.Services.Any(s => s.Name == c.Service && s.Role == "consumer");
-    var (text, learn, level) = action switch
+    var (ru, en, learn, level) = action switch
     {
-        "stop" when isBroker => ($"⏹ docker stop {name}: SIGTERM → controlled shutdown — брокер сам передаёт лидерство другим репликам и выходит", "graceful-shutdown", "warn"),
-        "stop" when isConsumer => ($"⏹ docker stop {name}: SIGTERM → консюмер коммитит offset-ы и отправляет LeaveGroup → немедленный ребаланс", "rebalance", "warn"),
-        "stop" => ($"⏹ docker stop {name}: SIGTERM → корректное завершение", null, "warn"),
-        "kill" when isBroker => ($"💥 docker kill {name}: SIGKILL — брокер умер мгновенно, без controlled shutdown. Контроллер узнает об этом по пропавшим heartbeat", "broker-down", "error"),
-        "kill" when isConsumer => ($"💥 docker kill {name}: SIGKILL — консюмер умер без коммита и LeaveGroup. Группа ждёт session.timeout.ms", "consumer-crash", "error"),
-        "kill" => ($"💥 docker kill {name}: SIGKILL — процесс умер мгновенно", null, "error"),
-        "pause" => ($"⏸ docker pause {name}: процесс заморожен (как бесконечная GC-пауза)", "broker-pause", "warn"),
-        "unpause" => ($"▶ docker unpause {name}", "broker-pause", "info"),
-        "start" => ($"▶ docker start {name}", null, "info"),
-        _ => ($"🔄 docker restart {name}", null, "info"),
+        "stop" when isBroker => (
+            $"⏹ docker stop {name}: SIGTERM → controlled shutdown — брокер сам передаёт лидерство другим репликам и выходит",
+            $"⏹ docker stop {name}: SIGTERM → controlled shutdown — the broker hands its leadership to other replicas, then exits",
+            "graceful-shutdown", "warn"),
+        "stop" when isConsumer => (
+            $"⏹ docker stop {name}: SIGTERM → консюмер коммитит offset-ы и отправляет LeaveGroup → немедленный ребаланс",
+            $"⏹ docker stop {name}: SIGTERM → the consumer commits offsets and sends LeaveGroup → immediate rebalance",
+            "rebalance", "warn"),
+        "stop" => ($"⏹ docker stop {name}: SIGTERM → корректное завершение", $"⏹ docker stop {name}: SIGTERM → graceful shutdown", null, "warn"),
+        "kill" when isBroker => (
+            $"💥 docker kill {name}: SIGKILL — брокер умер мгновенно, без controlled shutdown. Контроллер узнает об этом по пропавшим heartbeat",
+            $"💥 docker kill {name}: SIGKILL — the broker died instantly, without controlled shutdown. The controller notices only by missing heartbeats",
+            "broker-down", "error"),
+        "kill" when isConsumer => (
+            $"💥 docker kill {name}: SIGKILL — консюмер умер без коммита и LeaveGroup. Группа ждёт session.timeout.ms",
+            $"💥 docker kill {name}: SIGKILL — the consumer died without committing or LeaveGroup. The group waits for session.timeout.ms",
+            "consumer-crash", "error"),
+        "kill" => ($"💥 docker kill {name}: SIGKILL — процесс умер мгновенно", $"💥 docker kill {name}: SIGKILL — the process died instantly", null, "error"),
+        "pause" => ($"⏸ docker pause {name}: процесс заморожен (как бесконечная GC-пауза)", $"⏸ docker pause {name}: the process is frozen (like an endless GC pause)", "broker-pause", "warn"),
+        "unpause" => ($"▶ docker unpause {name}", $"▶ docker unpause {name}", "broker-pause", "info"),
+        "start" => ($"▶ docker start {name}", $"▶ docker start {name}", null, "info"),
+        _ => ($"🔄 docker restart {name}", $"🔄 docker restart {name}", null, "info"),
     };
-    events.Add(level, "action", text, learn);
+    events.Add(level, "action", ru, en, learn);
     try
     {
         await docker.ActionAsync(c.Id, action, ct);
@@ -139,8 +154,8 @@ async Task<IResult> ContainerActionAsync(string name, string action, ClusterMoni
     }
     catch (Exception ex)
     {
-        events.Add("error", "action", $"{name}: {action} не удался — {ex.Message}");
-        return Results.Json(new { ok = false, error = ex.Message }, statusCode: 409);
+        events.Add("error", "action", $"{name}: {action} не удался — {ex.Message}", $"{name}: {action} failed — {ex.Message}");
+        return Results.Json(new Msg(ex.Message, ex.Message).Error(), statusCode: 409);
     }
 }
 
@@ -153,8 +168,8 @@ app.MapPost("/api/brokers/{id:int}/network", async (int id, NetworkChaos body, C
     var chaosSpec = new NetworkChaos(latency, Math.Clamp(body.JitterMs, 0, latency), Math.Clamp(body.LossPct, 0, 100), body.Isolated, body.SplitFromBrokers);
     var containers = await monitor.RefreshContainersAsync(ct);
     var (ok, message) = await chaos.SetNetworkAsync(id, chaosSpec, containers, ct);
-    if (!ok) events.Add("error", "action", $"Сеть брокера {id}: {message}");
-    return ok ? Results.Ok(new { ok, output = message }) : Results.Json(new { ok, error = message }, statusCode: 409);
+    if (!ok) events.Add("error", "action", $"Сеть брокера {id}: {message.Ru}", $"Broker {id} network: {message.En}");
+    return ok ? Results.Ok(new { ok, output = message.En }) : Results.Json(message.Error(), statusCode: 409);
 });
 
 app.MapPost("/api/brokers/{id:int}/{action}", (int id, string action, ClusterMonitor m, DockerApi d, CancellationToken ct) =>
@@ -165,7 +180,8 @@ app.MapPost("/api/brokers/{id:int}/{action}", (int id, string action, ClusterMon
 
 app.MapPost("/api/heal-all", async (ClusterMonitor monitor, DockerApi docker, ChaosManager chaos, CancellationToken ct) =>
 {
-    events.Add("info", "action", "🩹 «Починить всё»: снять паузы, вернуть сеть, запустить остановленные контейнеры");
+    events.Add("info", "action", "🩹 «Починить всё»: снять паузы, вернуть сеть, запустить остановленные контейнеры",
+        "🩹 \"Heal all\": unpause, restore the network, start stopped containers");
     var log = new List<string>();
     var containers = await monitor.RefreshContainersAsync(ct);
     var managed = containers.Where(c => c.Service is not ("control-center" or "kafka-init")).ToList();
@@ -177,7 +193,7 @@ app.MapPost("/api/heal-all", async (ClusterMonitor monitor, DockerApi docker, Ch
     foreach (var b in options.Brokers.Where(b => !chaos.Get(b.Id).IsNone))
     {
         var (ok, msg) = await chaos.SetNetworkAsync(b.Id, new NetworkChaos(), containers, ct);
-        log.Add(ok ? $"сеть kafka-{b.Id} восстановлена" : msg);
+        log.Add(ok ? $"network kafka-{b.Id}" : msg.En);
     }
     foreach (var c in managed.Where(c => c.State is "exited" or "created" or "dead").OrderBy(c => options.Brokers.Any(b => b.Container == c.Name) ? 0 : 1))
     {
@@ -192,7 +208,9 @@ app.MapPost("/api/leaders/preferred", async (KafkaInspector kafka, SnapshotHub h
 {
     var parts = hub.Latest?.Topics.Where(t => !t.Internal)
         .SelectMany(t => t.Partitions.Select(p => new TopicPartition(t.Name, p.Id))).ToList() ?? [];
-    events.Add("info", "action", "⚖ Выборы предпочтительных лидеров (аналог kafka-leader-election.sh --election-type PREFERRED --all-topic-partitions)", "preferred-leader");
+    events.Add("info", "action",
+        "⚖ Выборы предпочтительных лидеров (аналог kafka-leader-election.sh --election-type PREFERRED --all-topic-partitions)",
+        "⚖ Preferred leader election (same as kafka-leader-election.sh --election-type PREFERRED --all-topic-partitions)", "preferred-leader");
     List<TopicPartitionError> results;
     try
     {
@@ -205,14 +223,15 @@ app.MapPost("/api/leaders/preferred", async (KafkaInspector kafka, SnapshotHub h
     }
     catch (Exception ex)
     {
-        return Results.Json(new { ok = false, error = ex.Message }, statusCode: 500);
+        return Results.Json(new Msg(ex.Message, ex.Message).Error(), statusCode: 500);
     }
     var elected = results.Count(r => !r.Error.IsError);
     var notNeeded = results.Count(r => r.Error.Code == ErrorCode.ElectionNotNeeded);
     var failed = results.Where(r => r.Error.IsError && r.Error.Code != ErrorCode.ElectionNotNeeded)
         .Select(r => $"{r.Topic}-{r.Partition.Value}: {r.Error.Reason}").ToList();
     events.Add(failed.Count > 0 ? "warn" : "success", "action",
-        $"Предпочтительные лидеры: переизбрано {elected}, уже на месте {notNeeded}" + (failed.Count > 0 ? $", не удалось {failed.Count}" : ""), "preferred-leader");
+        $"Предпочтительные лидеры: переизбрано {elected}, уже на месте {notNeeded}" + (failed.Count > 0 ? $", не удалось {failed.Count}" : ""),
+        $"Preferred leaders: {elected} re-elected, {notNeeded} already in place" + (failed.Count > 0 ? $", {failed.Count} failed" : ""), "preferred-leader");
     return Results.Ok(new { ok = true, elected, notNeeded, failed });
 });
 
@@ -222,20 +241,24 @@ app.MapPost("/api/topics/{topic}/partitions", async (string topic, PartitionsReq
     {
         await kafka.Admin.CreatePartitionsAsync([new PartitionsSpecification { Topic = topic, IncreaseTo = req.Count }]);
         kafka.InvalidateConfigs();
-        events.Add("warn", "action", $"➕ Топик «{topic}» расширен до {req.Count} партиций (kafka-topics.sh --alter --partitions {req.Count}). Уменьшить число партиций нельзя!", "partitions-increase");
+        events.Add("warn", "action",
+            $"➕ Топик «{topic}» расширен до {req.Count} партиций (kafka-topics.sh --alter --partitions {req.Count}). Уменьшить число партиций нельзя!",
+            $"➕ Topic \"{topic}\" grown to {req.Count} partitions (kafka-topics.sh --alter --partitions {req.Count}). The partition count can never be decreased!",
+            "partitions-increase");
         return Results.Ok(new { ok = true });
     }
     catch (CreatePartitionsException ex)
     {
         var reason = ex.Results.FirstOrDefault()?.Error.Reason ?? ex.Message;
-        return Results.Json(new { ok = false, error = reason }, statusCode: 409);
+        return Results.Json(new Msg(reason, reason).Error(), statusCode: 409);
     }
 });
 
 app.MapPost("/api/topics/{topic}/config", async (string topic, TopicConfigRequest req, KafkaInspector kafka) =>
 {
     string[] allowed = ["min.insync.replicas", "retention.ms", "retention.bytes", "segment.ms", "min.cleanable.dirty.ratio", "unclean.leader.election.enable"];
-    if (!allowed.Contains(req.Key)) return Results.BadRequest(new { ok = false, error = $"Разрешено менять: {string.Join(", ", allowed)}" });
+    if (!allowed.Contains(req.Key))
+        return Results.BadRequest(new Msg($"Разрешено менять: {string.Join(", ", allowed)}", $"Allowed keys: {string.Join(", ", allowed)}").Error());
     try
     {
         var resource = new ConfigResource { Type = ResourceType.Topic, Name = topic };
@@ -244,19 +267,19 @@ app.MapPost("/api/topics/{topic}/config", async (string topic, TopicConfigReques
             [resource] = [new ConfigEntry { Name = req.Key, Value = req.Value, IncrementalOperation = AlterConfigOpType.Set }],
         });
         kafka.InvalidateConfigs();
-        events.Add("warn", "action", $"⚙ {topic}: {req.Key}={req.Value} (kafka-configs.sh --alter --entity-type topics --entity-name {topic} --add-config {req.Key}={req.Value})",
-            req.Key == "min.insync.replicas" ? "min-isr" : null);
+        var cli = $"⚙ {topic}: {req.Key}={req.Value} (kafka-configs.sh --alter --entity-type topics --entity-name {topic} --add-config {req.Key}={req.Value})";
+        events.Add("warn", "action", cli, cli, req.Key == "min.insync.replicas" ? "min-isr" : null);
         return Results.Ok(new { ok = true });
     }
     catch (Exception ex)
     {
-        return Results.Json(new { ok = false, error = ex.Message }, statusCode: 409);
+        return Results.Json(new Msg(ex.Message, ex.Message).Error(), statusCode: 409);
     }
 });
 
 app.MapPost("/api/groups/{group}/reset", async (string group, ResetRequest req, ClusterMonitor monitor, DockerApi docker, ChaosManager chaos, CancellationToken ct) =>
 {
-    if (!Regex.IsMatch(group, "^[A-Za-z0-9._-]+$")) return Results.BadRequest(new { ok = false, error = "Некорректное имя группы" });
+    if (!Regex.IsMatch(group, "^[A-Za-z0-9._-]+$")) return Results.BadRequest(new Msg("Некорректное имя группы", "Invalid group name").Error());
     string[] target = req.To switch
     {
         "earliest" => ["--to-earliest"],
@@ -264,32 +287,40 @@ app.MapPost("/api/groups/{group}/reset", async (string group, ResetRequest req, 
         "shift" => ["--shift-by", Math.Clamp(req.ShiftBy ?? -100, -1_000_000, 1_000_000).ToString()],
         _ => [],
     };
-    if (target.Length == 0) return Results.BadRequest(new { ok = false, error = "to: earliest | latest | shift" });
+    if (target.Length == 0) return Results.BadRequest(new Msg("to: earliest | latest | shift", "to: earliest | latest | shift").Error());
 
     var containers = await monitor.RefreshContainersAsync(ct);
     var broker = options.Brokers
         .Select(b => (Def: b, C: containers.FirstOrDefault(c => c.Name == b.Container)))
         .FirstOrDefault(x => x.C?.State == "running" && chaos.Get(x.Def.Id).IsNone);
-    if (broker.C is null) return Results.Json(new { ok = false, error = "Нет здорового брокера для запуска CLI" }, statusCode: 409);
+    if (broker.C is null)
+        return Results.Json(new Msg("Нет здорового брокера для запуска CLI", "No healthy broker to run the CLI on").Error(), statusCode: 409);
 
     string[] args = ["--bootstrap-server", "localhost:9092", "--group", group, "--reset-offsets", .. target, "--all-topics", "--execute"];
     var shown = "kafka-consumer-groups.sh " + string.Join(' ', args);
-    events.Add("info", "action", $"⏪ {shown}", "replay");
+    events.Add("info", "action", $"⏪ {shown}", $"⏪ {shown}", "replay");
     var result = await docker.ExecAsync(broker.C.Id, ["/opt/kafka/bin/kafka-consumer-groups.sh", .. args], "appuser",
         ["KAFKA_HEAP_OPTS=-Xmx128m", "KAFKA_JVM_PERFORMANCE_OPTS=-XX:+UseSerialGC -XX:TieredStopAtLevel=1"], ct);
     var output = (result.StdOut + "\n" + result.StdErr).Trim();
     var ok = result.ExitCode == 0 && !output.Contains("Error", StringComparison.OrdinalIgnoreCase);
-    var firstLine = output.Split('\n').FirstOrDefault(l => l.Contains("Error", StringComparison.OrdinalIgnoreCase)) ?? "";
-    events.Add(ok ? "success" : "error", "action",
-        ok ? $"Offset-ы группы «{group}» сброшены ({req.To}). При следующем подключении консюмеры начнут читать с новой позиции"
-           : $"Сброс offset-ов не выполнен: {firstLine.Trim()} — сначала останови все консюмеры группы", "replay");
+    var firstLine = (output.Split('\n').FirstOrDefault(l => l.Contains("Error", StringComparison.OrdinalIgnoreCase)) ?? "").Trim();
+    if (ok)
+        events.Add("success", "action",
+            $"Offset-ы группы «{group}» сброшены ({req.To}). При следующем подключении консюмеры начнут читать с новой позиции",
+            $"Offsets of group \"{group}\" reset ({req.To}). On the next connect, consumers start reading from the new position", "replay");
+    else
+        events.Add("error", "action",
+            $"Сброс offset-ов не выполнен: {firstLine} — сначала останови все консюмеры группы",
+            $"Offset reset failed: {firstLine} — stop every consumer of the group first", "replay");
     return Results.Ok(new { ok, command = shown, output });
 });
 
 app.MapPost("/api/produce", async (ProduceRequest req, MessagePeeker peeker) =>
 {
     var result = await peeker.ProduceAsync(req.Topic, req.Key, req.Value, req.Headers);
-    events.Add("info", "action", $"✉ Отправлено вручную в «{req.Topic}» (key={req.Key ?? "null"}): {Shorten(req.Value)}", req.Note);
+    events.Add("info", "action",
+        $"✉ Отправлено вручную в «{req.Topic}» (key={req.Key ?? "null"}): {Shorten(req.Value)}",
+        $"✉ Sent manually to \"{req.Topic}\" (key={req.Key ?? "null"}): {Shorten(req.Value)}", req.Note);
     return Results.Ok(result);
 });
 
@@ -306,10 +337,12 @@ app.MapGet("/api/topics/{topic}/messages", (string topic, int? partition, int? l
 app.Map("/api/svc/{service}/{**path}", (string service, string path, HttpRequest request, ServicePoller poller, ClusterMonitor monitor, CancellationToken ct) =>
     poller.ProxyAsync(service, path, request, monitor.Containers, ct));
 
-app.MapGet("/api/docs", () =>
+// Список памяток на нужном языке: docs/en/*.md или docs/ru/*.md
+app.MapGet("/api/docs", (string? lang) =>
 {
-    if (!Directory.Exists(options.DocsPath)) return Results.Ok(Array.Empty<object>());
-    var docs = Directory.GetFiles(options.DocsPath, "*.md").OrderBy(f => f).Select(f =>
+    var dir = Path.Combine(options.DocsPath, lang == "ru" ? "ru" : "en");
+    if (!Directory.Exists(dir)) return Results.Ok(Array.Empty<object>());
+    var docs = Directory.GetFiles(dir, "*.md").OrderBy(f => f).Select(f =>
     {
         var title = File.ReadLines(f).FirstOrDefault(l => l.StartsWith("# "))?[2..].Trim() ?? Path.GetFileNameWithoutExtension(f);
         return new { file = Path.GetFileName(f), title };

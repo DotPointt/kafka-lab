@@ -1,59 +1,67 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Kafka Lab</title>
+  <meta name="description" content="An interactive Apache Kafka lab: a real 3-broker KRaft cluster with producers and consumers in C#, Go and Python, failure injection, guided scenarios, cheat sheets and flashcards.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='7' r='4' fill='%23f5a524'/%3E%3Ccircle cx='7' cy='24' r='4' fill='%2360a5fa'/%3E%3Ccircle cx='25' cy='24' r='4' fill='%2322c55e'/%3E%3Cpath d='M16 11v6M16 17l-7 4M16 17l7 4' stroke='%23d7dce5' stroke-width='2'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
   <header class="topbar">
-    <div class="brand">
+    <a class="brand" id="brand" href="#docs" data-tip="Open the cheat sheets" data-ru-tip="Открыть памятки">
       <span class="logo" aria-hidden="true">
         <svg viewBox="0 0 32 32" width="22" height="22"><circle cx="16" cy="7" r="4" fill="#f5a524"/><circle cx="7" cy="24" r="4" fill="#60a5fa"/><circle cx="25" cy="24" r="4" fill="#22c55e"/><path d="M16 11v6M16 17l-7 4M16 17l7 4" stroke="currentColor" stroke-width="2"/></svg>
       </span>
       <span class="brand-name">Kafka Lab</span>
-    </div>
+    </a>
     <nav class="tabs" role="tablist">
-      <button class="tab-btn active" data-tab="live" role="tab">Живая схема</button>
-      <button class="tab-btn" data-tab="docs" role="tab">Памятки</button>
-      <button class="tab-btn" data-tab="cards" role="tab">Карточки</button>
+      <button class="tab-btn active" data-tab="live" role="tab" data-ru="Живая схема">Live map</button>
+      <button class="tab-btn" data-tab="docs" role="tab" data-ru="Памятки">Cheat sheets</button>
+      <button class="tab-btn" data-tab="cards" role="tab" data-ru="Карточки">Flashcards</button>
     </nav>
     <div class="health" id="health"></div>
     <div class="top-actions">
-      <span class="conn" id="conn" title="Соединение с control-center">●</span>
-      <button class="btn" id="btn-scenarios" title="Пошаговые лабораторные работы">🎓 Сценарии</button>
-      <button class="btn btn-heal" id="btn-heal" title="Снять все паузы, вернуть сеть, запустить остановленные контейнеры">🩹 Починить всё</button>
+      <span class="conn" id="conn" title="Connection to control-center" data-ru-title="Соединение с control-center">●</span>
+      <button class="btn" id="btn-scenarios" title="Step-by-step labs" data-ru-title="Пошаговые лабораторные работы" data-ru="🎓 Сценарии">🎓 Scenarios</button>
+      <button class="btn btn-heal" id="btn-heal" title="Unpause everything, restore the network, start stopped containers"
+        data-ru-title="Снять все паузы, вернуть сеть, запустить остановленные контейнеры" data-ru="🩹 Починить всё">🩹 Heal all</button>
+      <div class="seg lang-switch" role="group" aria-label="Language">
+        <button type="button" data-lang="en" title="English">EN</button>
+        <button type="button" data-lang="ru" title="Русский">RU</button>
+      </div>
+      <button class="icon-btn about-btn" id="btn-about" aria-label="About this site" data-tip="What is this site?" data-ru-tip="Что это за сайт?">?</button>
     </div>
   </header>
 
   <main>
-    <!-- ============ ЖИВАЯ СХЕМА ============ -->
+    <!-- ============ LIVE MAP ============ -->
     <section class="tab-page active" id="tab-live">
       <div class="live-layout">
         <div class="live-main">
           <div class="demo-bar hidden" id="demo-bar"></div>
           <div class="live-grid" id="live-grid">
             <div class="col col-producers">
-              <div class="col-title"><span>Producers</span><span class="col-hint">пишут в топики</span></div>
+              <div class="col-title"><span>Producers</span><span class="col-hint" data-ru="пишут в топики">write to topics</span></div>
               <div id="producers" class="stack"></div>
             </div>
             <div class="col col-brokers">
               <div class="col-title">
-                <span>Кластер Kafka · KRaft</span>
+                <span data-ru="Кластер Kafka · KRaft">Kafka cluster · KRaft</span>
                 <span class="col-hint" id="cluster-hint"></span>
               </div>
               <div class="legend" id="legend"></div>
               <div id="brokers" class="stack"></div>
               <div class="cluster-tools">
-                <button class="btn btn-sm" id="btn-preferred" title="Вернуть лидерство предпочтительным репликам (первым в списке replicas)">⚖ Предпочтительные лидеры</button>
-                <label class="chk"><input type="checkbox" id="chk-flow" checked> анимация потоков</label>
-                <label class="chk"><input type="checkbox" id="chk-replication" checked> репликация</label>
+                <button class="btn btn-sm" id="btn-preferred" title="Give leadership back to the preferred replicas (the first in the replicas list)"
+                  data-ru-title="Вернуть лидерство предпочтительным репликам (первым в списке replicas)" data-ru="⚖ Предпочтительные лидеры">⚖ Preferred leaders</button>
+                <label class="chk"><input type="checkbox" id="chk-flow" checked> <span data-ru="анимация потоков">flow animation</span></label>
+                <label class="chk"><input type="checkbox" id="chk-replication" checked> <span data-ru="репликация">replication</span></label>
               </div>
             </div>
             <div class="col col-consumers">
-              <div class="col-title"><span>Consumer groups</span><span class="col-hint">читают топики</span></div>
+              <div class="col-title"><span>Consumer groups</span><span class="col-hint" data-ru="читают топики">read topics</span></div>
               <div id="groups" class="stack"></div>
             </div>
             <canvas id="flow" aria-hidden="true"></canvas>
@@ -62,9 +70,9 @@
           <div class="bottom">
             <div class="bottom-left panel">
               <div class="subtabs" role="tablist">
-                <button class="subtab active" data-sub="partitions">Партиции и offset-ы</button>
-                <button class="subtab" data-sub="charts">Графики</button>
-                <button class="subtab" data-sub="messages">Сообщения</button>
+                <button class="subtab active" data-sub="partitions" data-ru="Партиции и offset-ы">Partitions &amp; offsets</button>
+                <button class="subtab" data-sub="charts" data-ru="Графики">Charts</button>
+                <button class="subtab" data-sub="messages" data-ru="Сообщения">Messages</button>
               </div>
               <div class="sub-page active" id="sub-partitions"></div>
               <div class="sub-page" id="sub-charts"></div>
@@ -72,37 +80,37 @@
             </div>
             <div class="bottom-right panel">
               <div class="events-head">
-                <h3>Журнал событий</h3>
+                <h3 data-ru="Журнал событий">Event log</h3>
                 <div class="events-filters" id="events-filters">
-                  <button class="chip-btn active" data-f="all">все</button>
-                  <button class="chip-btn" data-f="cluster">кластер</button>
-                  <button class="chip-btn" data-f="group">группы</button>
-                  <button class="chip-btn" data-f="service">сервисы</button>
-                  <button class="chip-btn" data-f="action">действия</button>
-                  <button class="chip-btn" data-f="problems">проблемы</button>
+                  <button class="chip-btn active" data-f="all" data-ru="все">all</button>
+                  <button class="chip-btn" data-f="cluster" data-ru="кластер">cluster</button>
+                  <button class="chip-btn" data-f="group" data-ru="группы">groups</button>
+                  <button class="chip-btn" data-f="service" data-ru="сервисы">services</button>
+                  <button class="chip-btn" data-f="action" data-ru="действия">actions</button>
+                  <button class="chip-btn" data-f="problems" data-ru="проблемы">problems</button>
                 </div>
-                <input type="search" id="events-search" placeholder="поиск…">
+                <input type="search" id="events-search" placeholder="search…" data-ru-placeholder="поиск…">
               </div>
               <div class="events" id="events"></div>
             </div>
           </div>
         </div>
 
-        <aside class="drawer" id="drawer" aria-label="Сценарии">
+        <aside class="drawer" id="drawer" aria-label="Scenarios">
           <div class="drawer-head">
-            <h3 id="drawer-title">Сценарии</h3>
-            <button class="icon-btn" id="drawer-close" title="Закрыть">✕</button>
+            <h3 id="drawer-title" data-ru="Сценарии">Scenarios</h3>
+            <button class="icon-btn" id="drawer-close" title="Close" data-ru-title="Закрыть">✕</button>
           </div>
           <div class="drawer-body" id="drawer-body"></div>
         </aside>
       </div>
     </section>
 
-    <!-- ============ ПАМЯТКИ ============ -->
+    <!-- ============ CHEAT SHEETS ============ -->
     <section class="tab-page" id="tab-docs">
       <div class="docs-layout">
         <aside class="docs-nav">
-          <input type="search" id="docs-search" placeholder="поиск по памяткам…">
+          <input type="search" id="docs-search" placeholder="search the cheat sheets…" data-ru-placeholder="поиск по памяткам…">
           <div id="docs-list"></div>
           <div class="docs-toc" id="docs-toc"></div>
         </aside>
@@ -110,11 +118,37 @@
       </div>
     </section>
 
-    <!-- ============ КАРТОЧКИ ============ -->
+    <!-- ============ FLASHCARDS ============ -->
     <section class="tab-page" id="tab-cards">
       <div class="cards-layout" id="cards"></div>
     </section>
   </main>
+
+  <!-- ============ INTRO (first visit) ============ -->
+  <div class="modal-backdrop hidden" id="intro" role="dialog" aria-modal="true" aria-labelledby="intro-title">
+    <div class="modal">
+      <button class="icon-btn modal-close" id="intro-close" aria-label="Close" title="Close" data-ru-title="Закрыть">✕</button>
+      <div class="modal-brand">
+        <svg viewBox="0 0 32 32" width="30" height="30" aria-hidden="true"><circle cx="16" cy="7" r="4" fill="#f5a524"/><circle cx="7" cy="24" r="4" fill="#60a5fa"/><circle cx="25" cy="24" r="4" fill="#22c55e"/><path d="M16 11v6M16 17l-7 4M16 17l7 4" stroke="currentColor" stroke-width="2"/></svg>
+        <h2 id="intro-title">Kafka Lab</h2>
+        <div class="seg lang-switch" role="group" aria-label="Language">
+          <button type="button" data-lang="en" title="English">EN</button>
+          <button type="button" data-lang="ru" title="Русский">RU</button>
+        </div>
+      </div>
+      <p class="modal-lead" data-ru="Интерактивный стенд для изучения Apache Kafka: настоящий кластер из 3 брокеров и сервисы на C#, Go и Python. Ломай его и смотри, что происходит.">An interactive playground for learning Apache Kafka: a real 3-broker cluster with services in C#, Go and Python. Break it and watch what happens.</p>
+      <ul class="modal-points">
+        <li><b data-ru="🗺 Живая схема">🗺 Live map</b> — <span data-ru="сообщения идут через брокеры, партиции и consumer groups в реальном времени.">messages flowing through brokers, partitions and consumer groups in real time.</span></li>
+        <li><b data-ru="💥 Сбои">💥 Failures</b> — <span data-ru="убивай брокеры, рви сеть, создавай lag; у каждого события есть «почему?».">kill brokers, cut the network, build up lag; every event has a "why?".</span></li>
+        <li><b data-ru="🎓 Учёба">🎓 Learning</b> — <span data-ru="пошаговые сценарии, памятки и карточки.">guided scenarios, cheat sheets and flashcards.</span></li>
+      </ul>
+      <p class="modal-demo hidden" id="intro-demo"></p>
+      <div class="modal-actions">
+        <button class="btn" id="intro-docs" data-ru="📚 Читать основы">📚 Read the basics</button>
+        <button class="btn btn-primary" id="intro-go" data-ru="Поехали →">Let's go →</button>
+      </div>
+    </div>
+  </div>
 
   <div class="tooltip" id="tooltip" role="tooltip"></div>
   <div class="popover" id="popover"></div>

@@ -31,7 +31,8 @@ public sealed class ClusterMonitor(
     protected override async Task ExecuteAsync(CancellationToken ct)
     {
         quorum.IsImpaired = id => !chaos.Get(id).IsNone;
-        events.Add("info", "system", "control-center запущен: снимок кластера каждую секунду через AdminClient + Docker API");
+        events.Add("info", "system", "control-center запущен: снимок кластера каждую секунду через AdminClient + Docker API",
+            "control-center started: a cluster snapshot every second via AdminClient + Docker API");
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(1));
         do
         {
@@ -82,7 +83,7 @@ public sealed class ClusterMonitor(
         }
         else
         {
-            snap.Cluster.DockerError = "docker.sock не смонтирован — имитация сбоев недоступна";
+            snap.Cluster.DockerError = "docker.sock is not mounted — chaos actions are unavailable / docker.sock не смонтирован — имитация сбоев недоступна";
         }
         Containers = containers;
         if (containers is not null) await chaos.ReconcileAsync(containers, ct);

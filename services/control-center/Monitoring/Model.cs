@@ -39,6 +39,7 @@ public sealed class QuorumInfo
     public long UpdatedAt { get; set; }
     public int? SourceBroker { get; set; }
     public string? Error { get; set; }
+    public string? ErrorEn { get; set; }
 }
 
 public sealed record VoterView(int Id, long LogEndOffset, long Lag, long LastFetchAgoMs, string Status);
@@ -135,4 +136,5 @@ public sealed class ServiceInstanceView
     public JsonElement? Stats { get; set; }
 }
 
-public sealed record LabEvent(long Id, long Ts, string Level, string Category, string Text, string? Learn, string? Source);
+/// <summary>Событие журнала. Text — по-русски, TextEn — по-английски.</summary>
+public sealed record LabEvent(long Id, long Ts, string Level, string Category, string Text, string? TextEn, string? Learn, string? Source);

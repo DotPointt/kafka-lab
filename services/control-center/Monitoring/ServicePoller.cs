@@ -51,9 +51,9 @@ public sealed class ServicePoller(IHttpClientFactory httpFactory, LabOptions opt
     public async Task<IResult> ProxyAsync(string service, string path, HttpRequest request, IReadOnlyList<ContainerInfo>? containers, CancellationToken ct)
     {
         var def = options.Services.FirstOrDefault(s => s.Name == service);
-        if (def is null) return Results.NotFound(new { error = $"Нет сервиса {service}" });
+        if (def is null) return Results.NotFound(new Msg($"Нет сервиса {service}", $"No service {service}").Error());
         var targets = Targets(def, containers).Where(t => t.State == "running").ToList();
-        if (targets.Count == 0) return Results.Json(new { ok = false, error = $"{service} не запущен" }, statusCode: 503);
+        if (targets.Count == 0) return Results.Json(new Msg($"{service} не запущен", $"{service} is not running").Error(), statusCode: 503);
 
         string body;
         using (var reader = new StreamReader(request.Body, Encoding.UTF8)) body = await reader.ReadToEndAsync(ct);

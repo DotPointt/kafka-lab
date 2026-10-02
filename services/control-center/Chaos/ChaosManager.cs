@@ -23,7 +23,7 @@ public sealed class ChaosManager(DockerApi docker, EventStore events, LabOptions
 
     public NetworkChaos Get(int brokerId) => _applied.TryGetValue(brokerId, out var a) ? a.Chaos : new NetworkChaos();
 
-    public async Task<(bool Ok, string Message)> SetNetworkAsync(int brokerId, NetworkChaos chaos, IReadOnlyList<ContainerInfo> containers, CancellationToken ct)
+    public async Task<(bool Ok, Msg Message)> SetNetworkAsync(int brokerId, NetworkChaos chaos, IReadOnlyList<ContainerInfo> containers, CancellationToken ct)
     {
         await _gate.WaitAsync(ct);
         try
@@ -36,13 +36,16 @@ public sealed class ChaosManager(DockerApi docker, EventStore events, LabOptions
         }
     }
 
-    private async Task<(bool Ok, string Message)> ApplyAsync(int brokerId, NetworkChaos chaos, IReadOnlyList<ContainerInfo> containers, bool announce, CancellationToken ct)
+    private async Task<(bool Ok, Msg Message)> ApplyAsync(int brokerId, NetworkChaos chaos, IReadOnlyList<ContainerInfo> containers, bool announce, CancellationToken ct)
     {
         var def = options.Brokers.FirstOrDefault(b => b.Id == brokerId);
         var container = containers.FirstOrDefault(c => c.Name == def?.Container);
-        if (def is null || container is null) return (false, $"Брокер {brokerId} не найден");
-        if (container.State == "paused") return (false, "Контейнер на паузе — сначала сними паузу (tc выполняется внутри контейнера)");
-        if (container.State != "running") return (false, "Контейнер остановлен — сеть настраивать не у кого");
+        if (def is null || container is null) return (false, new Msg($"Брокер {brokerId} не найден", $"Broker {brokerId} not found"));
+        if (container.State == "paused")
+            return (false, new Msg("Контейнер на паузе — сначала сними паузу (tc выполняется внутри контейнера)",
+                "The container is paused — unpause it first (tc runs inside the container)"));
+        if (container.State != "running")
+            return (false, new Msg("Контейнер остановлен — сеть настраивать не у кого", "The container is stopped — there is no network to configure"));
 
         var peers = options.Brokers.Where(b => b.Id != brokerId)
             .Select(b => containers.FirstOrDefault(c => c.Name == b.Container)?.Ip)
@@ -50,32 +53,44 @@ public sealed class ChaosManager(DockerApi docker, EventStore events, LabOptions
 
         var script = BuildScript(chaos, peers);
         var result = await docker.ExecAsync(container.Id, ["sh", "-c", script], "root", null, ct);
-        if (result.ExitCode != 0) return (false, $"tc завершился с кодом {result.ExitCode}: {result.StdErr.Trim()}");
+        if (result.ExitCode != 0)
+            return (false, new Msg($"tc завершился с кодом {result.ExitCode}: {result.StdErr.Trim()}", $"tc exited with code {result.ExitCode}: {result.StdErr.Trim()}"));
 
         var startedAt = await docker.StartedAtAsync(container.Id, ct);
         if (chaos.IsNone) _applied.TryRemove(brokerId, out _);
         else _applied[brokerId] = new Applied(chaos, startedAt, string.Join(",", peers));
 
         if (announce) Announce(brokerId, chaos);
-        return (true, result.StdOut.Trim());
+        return (true, new Msg(result.StdOut.Trim(), result.StdOut.Trim()));
     }
 
     private void Announce(int brokerId, NetworkChaos c)
     {
         if (c.IsNone)
         {
-            events.Add("success", "chaos", $"Сеть брокера {brokerId} восстановлена (tc qdisc del)", "network-chaos");
+            events.Add("success", "chaos", $"Сеть брокера {brokerId} восстановлена (tc qdisc del)", $"Broker {brokerId} network restored (tc qdisc del)", "network-chaos");
             return;
         }
-        var parts = new List<string>();
-        if (c.Isolated) parts.Add("ПОЛНАЯ ИЗОЛЯЦИЯ (100% потерь)");
+        var ru = new List<string>();
+        var en = new List<string>();
+        var loss = c.LossPct.ToString(CultureInfo.InvariantCulture);
+        if (c.Isolated)
+        {
+            ru.Add("ПОЛНАЯ ИЗОЛЯЦИЯ (100% потерь)");
+            en.Add("FULL ISOLATION (100% loss)");
+        }
         else
         {
-            if (c.LatencyMs > 0) parts.Add($"задержка {c.LatencyMs} мс ± {c.JitterMs} мс");
-            if (c.LossPct > 0) parts.Add($"потеря {c.LossPct.ToString(CultureInfo.InvariantCulture)}% пакетов");
+            if (c.LatencyMs > 0) { ru.Add($"задержка {c.LatencyMs} мс ± {c.JitterMs} мс"); en.Add($"latency {c.LatencyMs} ms ± {c.JitterMs} ms"); }
+            if (c.LossPct > 0) { ru.Add($"потеря {loss}% пакетов"); en.Add($"{loss}% packet loss"); }
         }
-        if (c.SplitFromBrokers && !c.Isolated) parts.Add("отрезан от других брокеров (клиенты его видят)");
-        events.Add("warn", "chaos", $"Сеть брокера {brokerId}: {string.Join(", ", parts)}", c.SplitFromBrokers ? "split-brain" : "network-chaos");
+        if (c.SplitFromBrokers && !c.Isolated)
+        {
+            ru.Add("отрезан от других брокеров (клиенты его видят)");
+            en.Add("cut off from the other brokers (clients still reach it)");
+        }
+        events.Add("warn", "chaos", $"Сеть брокера {brokerId}: {string.Join(", ", ru)}", $"Broker {brokerId} network: {string.Join(", ", en)}",
+            c.SplitFromBrokers ? "split-brain" : "network-chaos");
     }
 
     private static string BuildScript(NetworkChaos c, List<string> peers)
@@ -124,7 +139,8 @@ public sealed class ChaosManager(DockerApi docker, EventStore events, LabOptions
                 if (container is null || container.State is "exited" or "dead" or "created")
                 {
                     _applied.TryRemove(brokerId, out _);
-                    events.Add("info", "chaos", $"Брокер {brokerId} остановлен — сетевые помехи сброшены вместе с его сетью", "network-chaos");
+                    events.Add("info", "chaos", $"Брокер {brokerId} остановлен — сетевые помехи сброшены вместе с его сетью",
+                        $"Broker {brokerId} stopped — its network impairments are gone with it", "network-chaos");
                     continue;
                 }
                 if (container.State != "running") continue;
@@ -133,7 +149,7 @@ public sealed class ChaosManager(DockerApi docker, EventStore events, LabOptions
                 if (startedAt != applied.StartedAt)
                 {
                     _applied.TryRemove(brokerId, out _);
-                    events.Add("info", "chaos", $"Брокер {brokerId} перезапущен — сетевые помехи сброшены", "network-chaos");
+                    events.Add("info", "chaos", $"Брокер {brokerId} перезапущен — сетевые помехи сброшены", $"Broker {brokerId} restarted — network impairments were reset", "network-chaos");
                     continue;
                 }
 

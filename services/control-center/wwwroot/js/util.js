@@ -1,4 +1,5 @@
-// Мелкие утилиты: создание DOM, форматирование, murmur2 (как в Kafka), тосты, тултипы.
+// Small helpers: DOM creation, formatting, murmur2 (same as Kafka), toasts, tooltips.
+import { T, locale } from './i18n.js';
 
 /** h('div', {class: 'x', onclick: fn}, child1, 'text', ...) */
 export function h(tag, attrs, ...children) {
@@ -44,20 +45,24 @@ export function fmtNum(n, digits = 0) {
   if (abs >= 1e9) return (n / 1e9).toFixed(1) + 'B';
   if (abs >= 1e6) return (n / 1e6).toFixed(abs >= 1e7 ? 1 : 2) + 'M';
   if (abs >= 1e4) return (n / 1e3).toFixed(abs >= 1e5 ? 0 : 1) + 'k';
-  return Number(n).toLocaleString('ru-RU', { maximumFractionDigits: digits });
+  return Number(n).toLocaleString(locale, { maximumFractionDigits: digits });
 }
 
+const PER_SEC = T('/s', '/с');
+const SEC = T('s', 'с');
+const MS = T('ms', 'мс');
+
 export function fmtRate(n) {
-  if (!n) return '0/с';
-  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k/с';
-  return fmtNum(n, n < 10 ? 1 : 0) + '/с';
+  if (!n) return '0' + PER_SEC;
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' + PER_SEC;
+  return fmtNum(n, n < 10 ? 1 : 0) + PER_SEC;
 }
 
 export function fmtMs(n) {
   if (n === null || n === undefined) return '—';
-  if (n >= 10000) return (n / 1000).toFixed(1) + 'с';
-  if (n >= 1000) return (n / 1000).toFixed(2) + 'с';
-  return (n < 10 ? n.toFixed(1) : Math.round(n)) + 'мс';
+  if (n >= 10000) return (n / 1000).toFixed(1) + SEC;
+  if (n >= 1000) return (n / 1000).toFixed(2) + SEC;
+  return (n < 10 ? n.toFixed(1) : Math.round(n)) + MS;
 }
 
 export function fmtBytes(n) {
@@ -70,7 +75,7 @@ export function fmtBytes(n) {
 
 export function fmtTime(ts) {
   const d = new Date(ts);
-  return d.toLocaleTimeString('ru-RU', { hour12: false });
+  return d.toLocaleTimeString(locale, { hour12: false });
 }
 
 // ---------- цвета топиков ----------

@@ -1,12 +1,13 @@
-// Нижние панели «Живой схемы»: таблица партиций и offset-ов, сообщения, журнал событий, сводка в шапке.
+// Bottom panels of the live map: partitions and offsets table, messages, event log, header summary.
 import { h, $, $$, esc, fmtNum, fmtRate, fmtTime, topicColor, syncList, toast, setText } from './util.js';
 import { store } from './store.js';
 import { actions, demoGuard } from './api.js';
 import { LEARN } from './learn.js';
 import { sortTopics } from './live.js';
 import { renderAll as renderCharts } from './charts.js';
+import { T, isRu, evText } from './i18n.js';
 
-// ================================================================== шапка
+// ================================================================== header
 
 export function renderHealth(snap) {
   const c = snap.cluster;
@@ -14,24 +15,30 @@ export function renderHealth(snap) {
   const totalLag = snap.groups.reduce((a, g) => a + g.totalLag, 0);
   const pill = (label, value, cls, tip) => `<span class="pill ${cls}" data-tip="${esc(tip)}">${label} <b>${value}</b></span>`;
   $('#health').innerHTML = [
-    pill('брокеры', `${c.brokersAlive}/${c.brokersTotal}`, c.brokersAlive === c.brokersTotal ? 'ok' : 'err', 'Брокеров, зарегистрированных в кластере (не зафенсенных)'),
-    pill('контроллер', q?.leaderId ? `#${q.leaderId}` : q ? '—' : '…', q?.leaderId || !q ? '' : 'err', q?.error ?? 'Активный контроллер KRaft (лидер Raft-кворума метаданных)'),
-    pill('URP', c.underReplicated, c.underReplicated ? 'warn' : 'ok', 'Under-replicated partitions: ISR меньше, чем реплик. Главный алерт эксплуатации Kafka'),
-    pill('ISR&lt;min', c.underMinIsr, c.underMinIsr ? 'err' : 'ok', 'Партиции, где ISR < min.insync.replicas: запись с acks=all невозможна'),
-    pill('offline', c.offline, c.offline ? 'err' : 'ok', 'Партиции без лидера: недоступны ни для записи, ни для чтения'),
-    pill('запись', fmtRate(c.produceRate), '', 'Суммарная скорость роста логов всех пользовательских топиков'),
-    pill('lag Σ', fmtNum(totalLag), totalLag > 10000 ? 'err' : totalLag > 1000 ? 'warn' : '', 'Суммарный lag всех consumer groups'),
-    !c.metadataOk ? pill('metadata', 'нет', 'err', c.metadataError ?? '') : '',
-    !c.dockerOk ? pill('docker', 'нет', 'err', c.dockerError ?? '') : '',
+    pill(T('brokers', 'брокеры'), `${c.brokersAlive}/${c.brokersTotal}`, c.brokersAlive === c.brokersTotal ? 'ok' : 'err',
+      T('Brokers registered in the cluster (not fenced)', 'Брокеров, зарегистрированных в кластере (не зафенсенных)')),
+    pill(T('controller', 'контроллер'), q?.leaderId ? `#${q.leaderId}` : q ? '—' : '…', q?.leaderId || !q ? '' : 'err',
+      (isRu ? q?.error : (q?.errorEn ?? q?.error)) ?? T('Active KRaft controller (leader of the metadata Raft quorum)', 'Активный контроллер KRaft (лидер Raft-кворума метаданных)')),
+    pill('URP', c.underReplicated, c.underReplicated ? 'warn' : 'ok',
+      T('Under-replicated partitions: the ISR is smaller than the replica set. The #1 Kafka operations alert', 'Under-replicated partitions: ISR меньше, чем реплик. Главный алерт эксплуатации Kafka')),
+    pill('ISR&lt;min', c.underMinIsr, c.underMinIsr ? 'err' : 'ok',
+      T('Partitions where ISR < min.insync.replicas: acks=all writes are impossible', 'Партиции, где ISR < min.insync.replicas: запись с acks=all невозможна')),
+    pill('offline', c.offline, c.offline ? 'err' : 'ok',
+      T('Partitions without a leader: unavailable for both writes and reads', 'Партиции без лидера: недоступны ни для записи, ни для чтения')),
+    pill(T('writes', 'запись'), fmtRate(c.produceRate), '', T('Total log growth rate of all user topics', 'Суммарная скорость роста логов всех пользовательских топиков')),
+    pill('lag Σ', fmtNum(totalLag), totalLag > 10000 ? 'err' : totalLag > 1000 ? 'warn' : '', T('Total lag of all consumer groups', 'Суммарный lag всех consumer groups')),
+    !c.metadataOk ? pill('metadata', T('down', 'нет'), 'err', c.metadataError ?? '') : '',
+    !c.dockerOk ? pill('docker', T('down', 'нет'), 'err', c.dockerError ?? '') : '',
   ].join('');
 }
 
-// ================================================================== партиции
+// ================================================================== partitions
 
 export function initPartitions() {
   const root = $('#sub-partitions');
   root.append(h('div', { class: 'small muted', style: 'margin-bottom:6px' },
-    'Каждая строка — партиция: где лидер, какие реплики в ISR, где начало и конец лога, и насколько отстаёт каждая consumer group.'));
+    T('Each row is a partition: where the leader is, which replicas are in the ISR, where the log starts and ends, and how far behind each consumer group is.',
+      'Каждая строка — партиция: где лидер, какие реплики в ISR, где начало и конец лога, и насколько отстаёт каждая consumer group.')));
   const list = h('div', {});
   root.append(list);
   store.onSnapshot(snap => {
@@ -44,11 +51,12 @@ function renderPartitions(list, snap) {
   const topics = sortTopics(snap.topics);
   const maxLag = Math.max(100, ...snap.groups.flatMap(g => g.offsets.map(o => o.lag ?? 0)));
   syncList(list, topics, t => t.name, t => {
-    const add = h('button', { class: 'btn btn-xs', 'data-tip': 'Увеличить число партиций (kafka-topics.sh --alter). Уменьшить нельзя!' }, '+ партиция');
+    const add = h('button', { class: 'btn btn-xs', 'data-tip': T('Increase the partition count (kafka-topics.sh --alter). You can never decrease it!', 'Увеличить число партиций (kafka-topics.sh --alter). Уменьшить нельзя!') }, T('+ partition', '+ партиция'));
     add.onclick = async () => {
       if (demoGuard()) return;
       const cur = store.topic(t.name)?.partitions.length ?? 0;
-      if (!confirm(`Увеличить «${t.name}» с ${cur} до ${cur + 1} партиций?\n\nhash(key) % N изменится — часть ключей начнёт попадать в другие партиции.`)) return;
+      if (!confirm(T(`Grow "${t.name}" from ${cur} to ${cur + 1} partitions?\n\nhash(key) % N changes — some keys will start landing in other partitions.`,
+        `Увеличить «${t.name}» с ${cur} до ${cur + 1} партиций?\n\nhash(key) % N изменится — часть ключей начнёт попадать в другие партиции.`))) return;
       await actions.addPartitions(t.name, cur + 1);
     };
     const cfg = h('span', { class: 'cfg' });
@@ -60,17 +68,20 @@ function renderPartitions(list, snap) {
   }, (wrap, t) => {
     const c = t.config ?? {};
     setText(wrap.cfg, `RF=${t.replicationFactor} · min.isr=${c['min.insync.replicas'] ?? '?'} · ${c['cleanup.policy'] ?? ''}` +
-      (c['retention.ms'] ? ` · retention=${Math.round(+c['retention.ms'] / 60000)} мин` : '') + ` · ${fmtRate(t.rate)}`);
+      (c['retention.ms'] ? ` · retention=${Math.round(+c['retention.ms'] / 60000)} ${T('min', 'мин')}` : '') + ` · ${fmtRate(t.rate)}`);
     const groups = snap.groups.filter(g => g.offsets.some(o => o.topic === t.name));
     const minIsr = +(c['min.insync.replicas'] ?? 1);
     let html = `<colgroup><col style="width:34px"><col style="width:88px"><col style="width:96px"><col style="width:80px"><col style="width:80px"><col style="width:76px">` +
       groups.map(() => '<col>').join('') + (groups.length ? '' : '<col>') + `</colgroup>` +
-      `<thead><tr><th>P</th><th>лидер</th><th>реплики (ISR)</th><th class="num">начало</th><th class="num">конец</th><th class="num">скорость</th>` +
-      groups.map(g => `<th data-tip="Lag группы ${esc(g.id)} и владелец партиции">${esc(g.id)}</th>`).join('') + (groups.length ? '' : '<th></th>') + `</tr></thead><tbody>`;
+      `<thead><tr><th>P</th><th>${T('leader', 'лидер')}</th><th>${T('replicas (ISR)', 'реплики (ISR)')}</th><th class="num">${T('start', 'начало')}</th>` +
+      `<th class="num">${T('end', 'конец')}</th><th class="num">${T('rate', 'скорость')}</th>` +
+      groups.map(g => `<th data-tip="${T(`Lag of group ${esc(g.id)} and the partition owner`, `Lag группы ${esc(g.id)} и владелец партиции`)}">${esc(g.id)}</th>`).join('') +
+      (groups.length ? '' : '<th></th>') + `</tr></thead><tbody>`;
     for (const p of t.partitions) {
       const reps = p.replicas.map(r => {
         const cls = r === p.leader ? 'rchip leader' : p.isr.includes(r) ? 'rchip isr' : 'rchip out';
-        return `<span class="${cls}" data-tip="брокер ${r}: ${r === p.leader ? 'лидер' : p.isr.includes(r) ? 'в ISR' : 'ВНЕ ISR'}">${r}</span>`;
+        const role = r === p.leader ? T('leader', 'лидер') : p.isr.includes(r) ? T('in ISR', 'в ISR') : T('OUT OF ISR', 'ВНЕ ISR');
+        return `<span class="${cls}" data-tip="${T('broker', 'брокер')} ${r}: ${role}">${r}</span>`;
       }).join('');
       const leaderTxt = p.leader < 0 ? '<span style="color:var(--err)">OFFLINE</span>' : `b${p.leader}`;
       const warn = p.leader >= 0 && p.isr.length < minIsr ? ' <span class="badge err" data-tip="ISR &lt; min.insync.replicas">ISR&lt;min</span>' : '';
@@ -82,7 +93,7 @@ function renderPartitions(list, snap) {
         const lag = o?.lag;
         const pct = lag ? Math.max(3, (Math.log10(1 + lag) / Math.log10(1 + maxLag)) * 100) : 0;
         const cls = lag > 10000 ? 'high' : lag > 1000 ? 'mid' : '';
-        html += `<td><div class="lagcell" data-tip="закоммичено: ${o?.committed ?? 'нет'} · конец: ${p.end ?? '—'} · читают ${fmtRate(o?.rate)}">` +
+        html += `<td><div class="lagcell" data-tip="${T('committed', 'закоммичено')}: ${o?.committed ?? T('none', 'нет')} · ${T('end', 'конец')}: ${p.end ?? '—'} · ${T('reading', 'читают')} ${fmtRate(o?.rate)}">` +
           `<div class="lagbar"><i class="${cls}" style="width:${pct}%"></i></div><span class="lagnum">${lag === undefined || lag === null ? '—' : fmtNum(lag)}</span>` +
           `<span class="owner">${owner ? esc(owner.clientId.replace(/^analytics-/, 'py-')) : '—'}</span></div></td>`;
       }
@@ -92,15 +103,15 @@ function renderPartitions(list, snap) {
   });
 }
 
-// ================================================================== сообщения
+// ================================================================== messages
 
 export function initMessages() {
   const root = $('#sub-messages');
   const topic = h('select', {});
   const partition = h('select', {});
-  const limit = h('select', {}, [20, 50, 100].map(n => h('option', { value: n }, `${n} последних`)));
-  const refresh = h('button', { class: 'btn btn-sm btn-primary' }, 'Прочитать');
-  const auto = h('label', { class: 'chk' }, h('input', { type: 'checkbox' }), 'авто (3 с)');
+  const limit = h('select', {}, [20, 50, 100].map(n => h('option', { value: n }, T(`last ${n}`, `${n} последних`))));
+  const refresh = h('button', { class: 'btn btn-sm btn-primary' }, T('Read', 'Прочитать'));
+  const auto = h('label', { class: 'chk' }, h('input', { type: 'checkbox' }), T('auto (3 s)', 'авто (3 с)'));
   const info = h('div', { class: 'small muted' });
   const table = h('table', { class: 'grid msg-table' });
 
@@ -115,7 +126,7 @@ export function initMessages() {
   const fillPartitions = () => {
     const parts = store.topic(topic.value)?.partitions ?? [];
     const cur = partition.value;
-    partition.replaceChildren(h('option', { value: '' }, 'все партиции'), ...parts.map(p => h('option', { value: p.id }, `партиция ${p.id}`)));
+    partition.replaceChildren(h('option', { value: '' }, T('all partitions', 'все партиции')), ...parts.map(p => h('option', { value: p.id }, `${T('partition', 'партиция')} ${p.id}`)));
     partition.value = [...partition.options].some(o => o.value === cur) ? cur : '';
   };
   topic.addEventListener('change', () => { fillPartitions(); load(); });
@@ -134,23 +145,23 @@ export function initMessages() {
     if (!r || r.ok === false) return;
     info.innerHTML = (r.watermarks ?? []).map(w => `P${w.partition}: [${w.low} … ${w.high})`).join(' · ') +
       (r.errors?.length ? ` · <span style="color:var(--err)">${esc(r.errors.join('; '))}</span>` : '');
-    table.innerHTML = `<thead><tr><th>P</th><th class="num">offset</th><th>время</th><th>key</th><th>value</th><th>headers</th></tr></thead><tbody>` +
+    table.innerHTML = `<thead><tr><th>P</th><th class="num">offset</th><th>${T('time', 'время')}</th><th>key</th><th>value</th><th>headers</th></tr></thead><tbody>` +
       r.messages.map(m => `<tr><td class="num">${m.partition}</td><td class="num">${m.offset}</td><td class="mono small">${fmtTime(m.timestamp)}</td>` +
         `<td class="mono">${m.key === null ? '<span class="muted">null</span>' : esc(m.key)}</td>` +
         `<td class="val">${m.value === null ? '<span class="muted">null (tombstone)</span>' : esc(m.value)}</td>` +
         `<td class="hdrs">${Object.entries(m.headers).map(([k, v]) => `${esc(k)}=${esc(v)}`).join('<br>')}</td></tr>`).join('') + '</tbody>';
-    if (!r.messages.length) table.innerHTML += '<tr><td colspan="6" class="muted">пусто</td></tr>';
+    if (!r.messages.length) table.innerHTML += `<tr><td colspan="6" class="muted">${T('empty', 'пусто')}</td></tr>`;
   }
   setInterval(() => {
     if (auto.firstChild.checked && $('#sub-messages').classList.contains('active')) load();
   }, 3000);
 
-  // --- форма отправки ---
+  // --- produce form ---
   const pTopic = h('select', {});
-  const pKey = h('input', { type: 'text', placeholder: 'key (пусто = null)' });
+  const pKey = h('input', { type: 'text', placeholder: T('key (empty = null)', 'key (пусто = null)') });
   const pValue = h('textarea', { placeholder: 'value' });
-  const pTomb = h('label', { class: 'chk', 'data-tip': 'value = null: в compacted-топике удаляет ключ' }, h('input', { type: 'checkbox' }), 'tombstone (null)');
-  const pSend = h('button', { class: 'btn btn-sm btn-primary' }, 'Отправить');
+  const pTomb = h('label', { class: 'chk', 'data-tip': T('value = null: deletes the key in a compacted topic', 'value = null: в compacted-топике удаляет ключ') }, h('input', { type: 'checkbox' }), 'tombstone (null)');
+  const pSend = h('button', { class: 'btn btn-sm btn-primary' }, T('Send', 'Отправить'));
   const pResult = h('span', { class: 'result' });
   const fillProduceTopics = () => {
     const names = sortTopics(store.snap?.topics ?? []).map(t => t.name);
@@ -171,20 +182,23 @@ export function initMessages() {
     h('div', { class: 'msg-toolbar' }, topic, partition, limit, refresh, auto),
     info, table,
     h('div', { class: 'produce-form' },
-      h('label', {}, 'топик'), pTopic, h('label', {}, 'key'), pKey,
+      h('label', {}, T('topic', 'топик')), pTopic, h('label', {}, 'key'), pKey,
       h('label', {}, 'value'), pValue,
       h('span', {}), h('div', { class: 'ctl-row', style: 'grid-column: 2 / -1; flex-wrap: wrap' }, pTomb, pSend, pResult)),
-    h('div', { class: 'send-row' }, h('span', { class: 'small muted' }, 'Быстро:'),
-      preset('☠ poison pill → orders', 'Битый JSON в orders: order-processor не сможет разобрать и отправит в orders.dlq', { topic: 'orders', key: 'customer-013', value: '{"orderId": oops, not json', note: 'dlq' }),
-      preset('🧾 профиль → customer-profiles', 'Новое значение для ключа customer-007 в compacted-топике', { topic: 'customer-profiles', key: 'customer-007', value: JSON.stringify({ customerId: 'customer-007', tier: 'vip', note: 'ручная правка' }), note: 'compaction' }),
-      preset('🪦 tombstone customer-007', 'value = null → после компакции ключ исчезнет из топика', { topic: 'customer-profiles', key: 'customer-007', value: null, note: 'compaction' }),
+    h('div', { class: 'send-row' }, h('span', { class: 'small muted' }, T('Quick:', 'Быстро:')),
+      preset('☠ poison pill → orders', T("Broken JSON in orders: order-processor can't parse it and sends it to orders.dlq", 'Битый JSON в orders: order-processor не сможет разобрать и отправит в orders.dlq'),
+        { topic: 'orders', key: 'customer-013', value: '{"orderId": oops, not json', note: 'dlq' }),
+      preset(T('🧾 profile → customer-profiles', '🧾 профиль → customer-profiles'), T('A new value for key customer-007 in the compacted topic', 'Новое значение для ключа customer-007 в compacted-топике'),
+        { topic: 'customer-profiles', key: 'customer-007', value: JSON.stringify({ customerId: 'customer-007', tier: 'vip', note: T('manual edit', 'ручная правка') }), note: 'compaction' }),
+      preset('🪦 tombstone customer-007', T('value = null → after compaction the key disappears from the topic', 'value = null → после компакции ключ исчезнет из топика'),
+        { topic: 'customer-profiles', key: 'customer-007', value: null, note: 'compaction' }),
     ));
 
   store.onSnapshot(() => { fillTopics(); fillProduceTopics(); });
   return { load };
 }
 
-// ================================================================== журнал событий
+// ================================================================== event log
 
 const CATEGORY_GROUPS = {
   cluster: ['broker', 'partition', 'controller', 'topic', 'system'],
@@ -199,7 +213,7 @@ let search = '';
 function passes(e) {
   if (filter === 'problems' && !(e.level === 'warn' || e.level === 'error')) return false;
   if (CATEGORY_GROUPS[filter] && !CATEGORY_GROUPS[filter].includes(e.category)) return false;
-  if (search && !(`${e.text} ${e.source ?? ''}`).toLowerCase().includes(search)) return false;
+  if (search && !(`${evText(e)} ${e.source ?? ''}`).toLowerCase().includes(search)) return false;
   return true;
 }
 
@@ -209,8 +223,8 @@ function eventEl(e, fresh) {
     h('span', { class: 't' }, fmtTime(e.ts)),
     h('div', {},
       e.source ? h('span', { class: 'src' }, e.source) : h('span', { class: 'src' }, e.category),
-      e.text,
-      learn ? h('button', { class: 'why' }, 'почему?') : null));
+      evText(e),
+      learn ? h('button', { class: 'why' }, T('why?', 'почему?')) : null));
   if (learn) {
     el.querySelector('.why').onclick = () => {
       const ex = el.querySelector('.explain');
@@ -240,7 +254,7 @@ export function initEvents() {
   });
 }
 
-// ================================================================== вкладки нижней панели
+// ================================================================== bottom panel tabs
 
 export function initSubtabs() {
   $$('.subtab').forEach(b => b.addEventListener('click', () => {
@@ -256,5 +270,7 @@ export function showSubtab(name) {
 }
 
 export function heal() {
-  return actions.healAll().then(r => { if (r?.ok) toast('Починка запущена: ' + (r.log?.join(', ') || 'всё и так в порядке'), 'ok', 6000); });
+  return actions.healAll().then(r => {
+    if (r?.ok) toast(T('Healing started: ', 'Починка запущена: ') + (r.log?.join(', ') || T('everything is already fine', 'всё и так в порядке')), 'ok', 6000);
+  });
 }

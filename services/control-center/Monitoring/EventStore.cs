@@ -9,11 +9,13 @@ public sealed class EventStore
     private readonly Lock _lock = new();
     private long _nextId;
 
-    public LabEvent Add(string level, string category, string text, string? learn = null, string? source = null, long? ts = null)
+    /// <param name="ru">Текст события по-русски.</param>
+    /// <param name="en">Текст события по-английски (UI показывает версию на выбранном языке).</param>
+    public LabEvent Add(string level, string category, string ru, string? en, string? learn = null, string? source = null, long? ts = null)
     {
         lock (_lock)
         {
-            var e = new LabEvent(++_nextId, ts ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), level, category, text, learn, source);
+            var e = new LabEvent(++_nextId, ts ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), level, category, ru, en, learn, source);
             _events.AddLast(e);
             while (_events.Count > 2000) _events.RemoveFirst();
             return e;

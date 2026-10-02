@@ -1,32 +1,33 @@
-// Простые линейные графики на canvas (без внешних библиотек).
+// Simple line charts on canvas (no external libraries).
 import { h, fmtNum, topicHex } from './util.js';
 import { store } from './store.js';
+import { T } from './i18n.js';
 
 const PALETTE = ['#f5a524', '#60a5fa', '#22c55e', '#c084fc', '#ef4444', '#2dd4bf', '#f472b6', '#facc15'];
 
 const CHARTS = [
   {
-    title: 'Запись в топики, сообщений/с',
+    title: T('Writes to topics, messages/s', 'Запись в топики, сообщений/с'),
     keys: () => [...store.history.series.keys()].filter(k => k.startsWith('topic:')),
     label: k => k.slice(6), color: k => topicHex(k.slice(6)),
   },
   {
-    title: 'Lag consumer groups, сообщений',
+    title: T('Consumer group lag, messages', 'Lag consumer groups, сообщений'),
     keys: () => [...store.history.series.keys()].filter(k => k.startsWith('lag:')),
     label: k => k.slice(4),
   },
   {
-    title: 'Чтение группами (скорость коммитов), сообщений/с',
+    title: T('Group reads (commit rate), messages/s', 'Чтение группами (скорость коммитов), сообщений/с'),
     keys: () => [...store.history.series.keys()].filter(k => k.startsWith('grate:')),
     label: k => k.slice(6),
   },
   {
-    title: 'Задержка подтверждения записи p99, мс',
+    title: T('Write acknowledgement latency p99, ms', 'Задержка подтверждения записи p99, мс'),
     keys: () => [...store.history.series.keys()].filter(k => k.startsWith('lat:')),
     label: k => k.slice(4),
   },
   {
-    title: 'Ошибки доставки у producer-ов, /с',
+    title: T('Producer delivery errors, /s', 'Ошибки доставки у producer-ов, /с'),
     keys: () => [...store.history.series.keys()].filter(k => k.startsWith('err:')),
     label: k => k.slice(4),
   },
@@ -37,7 +38,7 @@ const els = [];
 
 export function initCharts() {
   const root = document.getElementById('sub-charts');
-  root.append(h('div', { class: 'small muted', style: 'margin-bottom:8px' }, 'Последние 5 минут. Данные собираются, пока открыта страница.'));
+  root.append(h('div', { class: 'small muted', style: 'margin-bottom:8px' }, T('Last 5 minutes. Data is collected while the page is open.', 'Последние 5 минут. Данные собираются, пока открыта страница.')));
   const grid = h('div', { class: 'charts' });
   root.append(grid);
   for (const c of CHARTS) {
@@ -97,8 +98,9 @@ function drawChart(canvas, series) {
   }
   const span = Math.max(1, n - 1);
   const secs = Math.round(((store.history.t[n - 1] ?? 0) - (store.history.t[0] ?? 0)) / 1000);
-  ctx.fillText(`−${secs}с`, padL, hgt - 3);
-  ctx.fillText('сейчас', w - padR - 36, hgt - 3);
+  ctx.fillText(`−${secs}${T('s', 'с')}`, padL, hgt - 3);
+  const now = T('now', 'сейчас');
+  ctx.fillText(now, w - padR - ctx.measureText(now).width, hgt - 3);
 
   for (const s of series) {
     ctx.beginPath();

@@ -1,9 +1,9 @@
-# Публикует статическую копию Kafka Lab на GitHub Pages:
-#   • «Памятки» и «Карточки» работают полностью;
-#   • «Живая схема» проигрывает запись реального стенда (demo/recording.json, см. tools/record-demo.py),
-#     потому что на Pages нет бэкенда (Kafka, control-center, Docker).
+# Publishes a static copy of Kafka Lab to GitHub Pages:
+#   • the cheat sheets and flashcards work fully (English and Russian);
+#   • the live map replays a recording of the real lab (demo/recording.json, see tools/record-demo.py),
+#     because there is no backend on Pages (Kafka, control-center, Docker).
 #
-# Один раз в настройках репозитория: Settings → Pages → Build and deployment → Source: GitHub Actions.
+# One-time repository setting: Settings → Pages → Build and deployment → Source: GitHub Actions.
 name: Publish site to GitHub Pages
 
 on:
@@ -31,33 +31,35 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Собрать статический сайт
+      - name: Build the static site
         run: |
           set -euo pipefail
-          mkdir -p _site/api _site/docs _site/demo
+          mkdir -p _site/api _site/docs/en _site/docs/ru _site/demo
           cp -r services/control-center/wwwroot/. _site/
-          cp docs/*.md docs/*.png _site/docs/
+          cp docs/en/*.md _site/docs/en/
+          cp docs/ru/*.md _site/docs/ru/
           cp demo/recording.json _site/demo/
 
-          # Демо-режим: UI проигрывает запись вместо живого стрима control-center
+          # Demo mode: the UI replays the recording instead of control-center's live stream
           cat > _site/config.js <<EOF
           window.KAFKA_LAB = { mode: 'demo', repo: '${{ github.server_url }}/${{ github.repository }}' };
           EOF
 
-          # Список памяток (на локальном стенде его отдаёт control-center: GET api/docs)
+          # Cheat sheet lists per language (in the local lab control-center serves them: GET api/docs?lang=…)
           python3 - <<'PY'
           import json, pathlib
-          docs = []
-          for f in sorted(pathlib.Path('docs').glob('*.md')):
-              lines = f.read_text(encoding='utf-8').splitlines()
-              title = next((l[2:].strip() for l in lines if l.startswith('# ')), f.stem)
-              docs.append({'file': f.name, 'title': title})
-          pathlib.Path('_site/api/docs.json').write_text(json.dumps(docs, ensure_ascii=False), encoding='utf-8')
-          print(f'Памяток: {len(docs)}')
+          for lang in ('en', 'ru'):
+              docs = []
+              for f in sorted(pathlib.Path('docs', lang).glob('*.md')):
+                  lines = f.read_text(encoding='utf-8').splitlines()
+                  title = next((l[2:].strip() for l in lines if l.startswith('# ')), f.stem)
+                  docs.append({'file': f.name, 'title': title})
+              pathlib.Path(f'_site/api/docs-{lang}.json').write_text(json.dumps(docs, ensure_ascii=False), encoding='utf-8')
+              print(f'{lang}: {len(docs)} cheat sheets')
           PY
 
           du -sh _site
-          find _site -maxdepth 2 | sort
+          find _site -maxdepth 3 | sort
 
       - uses: actions/configure-pages@v5
 

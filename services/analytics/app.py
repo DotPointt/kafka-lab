@@ -80,7 +80,8 @@ class State:
         self._throttle = {}
         self.last_error = None
 
-    def event(self, level, text, learn=None, throttle_key=None, throttle_s=5):
+    def event(self, level, text, text_en, learn=None, throttle_key=None, throttle_s=5):
+        """text — по-русски, text_en — по-английски (UI показывает выбранный язык)."""
         now = time.time()
         with self.lock:
             if throttle_key:
@@ -88,7 +89,8 @@ class State:
                     return
                 self._throttle[throttle_key] = now
             self._event_id += 1
-            self.events.append({"id": self._event_id, "ts": int(now * 1000), "level": level, "text": text, "learn": learn})
+            self.events.append({"id": self._event_id, "ts": int(now * 1000), "level": level,
+                                "text": text, "textEn": text_en, "learn": learn})
         print(f"[{level}] {text}", flush=True)
 
 
@@ -107,7 +109,7 @@ def on_assign(consumer, partitions):
         for p in partitions:
             S.assigned.add((p.topic, p.partition))
     if partitions:
-        S.event("info", f"{CLIENT_ID}: назначены [{fmt(partitions)}]", "rebalance")
+        S.event("info", f"{CLIENT_ID}: назначены [{fmt(partitions)}]", f"{CLIENT_ID}: assigned [{fmt(partitions)}]", "rebalance")
 
 
 def on_revoke(consumer, partitions):
@@ -115,14 +117,14 @@ def on_revoke(consumer, partitions):
         for p in partitions:
             S.assigned.discard((p.topic, p.partition))
     if partitions:
-        S.event("info", f"{CLIENT_ID}: отозваны [{fmt(partitions)}]", "rebalance")
+        S.event("info", f"{CLIENT_ID}: отозваны [{fmt(partitions)}]", f"{CLIENT_ID}: revoked [{fmt(partitions)}]", "rebalance")
 
 
 def on_lost(consumer, partitions):
     with S.lock:
         for p in partitions:
             S.assigned.discard((p.topic, p.partition))
-    S.event("warn", f"{CLIENT_ID}: партиции потеряны [{fmt(partitions)}]", "max-poll-interval")
+    S.event("warn", f"{CLIENT_ID}: партиции потеряны [{fmt(partitions)}]", f"{CLIENT_ID}: partitions lost [{fmt(partitions)}]", "max-poll-interval")
 
 
 def process(msg):
@@ -134,7 +136,8 @@ def process(msg):
     except (ValueError, TypeError):
         with S.lock:
             S.bad_messages += 1
-        S.event("warn", f"{CLIENT_ID}: не JSON в {topic}-{msg.partition()}@{msg.offset()} — пропускаем", "dlq", "bad-json", 5)
+        S.event("warn", f"{CLIENT_ID}: не JSON в {topic}-{msg.partition()}@{msg.offset()} — пропускаем",
+                f"{CLIENT_ID}: not JSON at {topic}-{msg.partition()}@{msg.offset()} — skipping it", "dlq", "bad-json", 5)
         value = None
 
     with S.lock:
@@ -172,10 +175,11 @@ def consume_loop():
         "heartbeat.interval.ms": 2500,
         "max.poll.interval.ms": 30000,
         "fetch.wait.max.ms": 100,
-        "error_cb": lambda err: S.event("warn", f"librdkafka: {err.str()}", None, f"err-{err.code()}", 8),
+        "error_cb": lambda err: S.event("warn", f"librdkafka: {err.str()}", f"librdkafka: {err.str()}", None, f"err-{err.code()}", 8),
     })
     consumer.subscribe(TOPICS, on_assign=on_assign, on_revoke=on_revoke, on_lost=on_lost)
-    S.event("info", f"{CLIENT_ID} подписался на {', '.join(TOPICS)} в группе «{GROUP_ID}»", "consumer-group")
+    S.event("info", f"{CLIENT_ID} подписался на {', '.join(TOPICS)} в группе «{GROUP_ID}»",
+            f"{CLIENT_ID} subscribed to {', '.join(TOPICS)} in group \"{GROUP_ID}\"", "consumer-group")
 
     paused = False
     while running:
@@ -185,12 +189,14 @@ def consume_loop():
             # pause() останавливает fetch, но консюмер остаётся в группе (heartbeat-ы идут, партиции за ним)
             consumer.pause(assignment)
             if not paused:
-                S.event("warn", f"{CLIENT_ID}: pause() — чтение остановлено, партиции остаются за мной, lag растёт", "pause")
+                S.event("warn", f"{CLIENT_ID}: pause() — чтение остановлено, партиции остаются за мной, lag растёт",
+                        f"{CLIENT_ID}: pause() — fetching stopped, partitions stay assigned to me, lag grows", "pause")
             paused = True
         elif not want_pause and paused:
             consumer.resume(assignment)
             paused = False
-            S.event("info", f"{CLIENT_ID}: resume() — продолжаем с того же offset и догоняем lag", "pause")
+            S.event("info", f"{CLIENT_ID}: resume() — продолжаем с того же offset и догоняем lag",
+                    f"{CLIENT_ID}: resume() — continuing from the same offset and catching up", "pause")
 
         try:
             msgs = consumer.consume(num_messages=500, timeout=0.3)
@@ -209,7 +215,8 @@ def consume_loop():
             if delay_ms > 0:
                 time.sleep(delay_ms / 1000.0)
 
-    S.event("info", f"{CLIENT_ID}: close() — коммит offset-ов и выход из группы", "rebalance")
+    S.event("info", f"{CLIENT_ID}: close() — коммит offset-ов и выход из группы",
+            f"{CLIENT_ID}: close() — committing offsets and leaving the group", "rebalance")
     consumer.close()
 
 
@@ -290,7 +297,7 @@ class Handler(BaseHTTPRequestHandler):
             if "processingDelayMs" in patch and patch["processingDelayMs"] is not None:
                 S.config["processingDelayMs"] = max(0, min(1000, float(patch["processingDelayMs"])))
             cfg = dict(S.config)
-        S.event("info", f"{CLIENT_ID}: новая конфигурация {cfg}")
+        S.event("info", f"{CLIENT_ID}: новая конфигурация {cfg}", f"{CLIENT_ID}: new config {cfg}")
         self._send(200, {"settings": cfg})
 
     do_POST = do_PUT
@@ -315,7 +322,7 @@ def main():
         try:
             consume_loop()
         except Exception as e:  # noqa: BLE001 — переподключаемся при любой ошибке
-            S.event("error", f"{CLIENT_ID}: {e}")
+            S.event("error", f"{CLIENT_ID}: {e}", f"{CLIENT_ID}: {e}")
             time.sleep(3)
     server.shutdown()
 

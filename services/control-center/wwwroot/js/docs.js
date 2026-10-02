@@ -1,11 +1,12 @@
-// Вкладка «Памятки»: список docs/*.md, мини-рендерер Markdown, оглавление и поиск.
+// The "Cheat sheets" tab: the docs/<lang>/*.md list, a mini Markdown renderer, table of contents and search.
 import { h, $, esc } from './util.js';
 import { DEMO } from './api.js';
+import { T, lang } from './i18n.js';
 
 let docs = [];
 const cache = new Map();
 let currentFile = null;
-let loaded = false;
+let loading = null;
 let query = '';
 
 export function initDocs() {
@@ -24,33 +25,41 @@ export function initDocs() {
   });
 }
 
-export async function showDocs() {
-  if (!loaded) {
-    loaded = true;
+export function showDocs() {
+  loading ??= (async () => {
     try {
-      // На локальном стенде список отдаёт control-center, в статической копии (GitHub Pages) — готовый JSON
-      docs = await (await fetch(DEMO ? 'api/docs.json' : 'api/docs')).json();
+      // In the local lab control-center serves the list; the static copy (GitHub Pages) has a prebuilt JSON
+      docs = await (await fetch(DEMO ? `api/docs-${lang}.json` : `api/docs?lang=${lang}`)).json();
     } catch {
       docs = [];
     }
     renderList();
     const fromHash = decodeURIComponent(location.hash.split('/')[1] ?? '');
     const first = docs.find(d => d.file === fromHash)?.file ?? docs[0]?.file;
-    if (first) openDoc(first);
-    else $('#doc').innerHTML = '<p class="muted">Памятки не найдены: каталог docs не смонтирован в control-center.</p>';
-  }
+    if (first) await openDoc(first);
+    else $('#doc').innerHTML = `<p class="muted">${T('No cheat sheets found: the docs directory is not mounted into control-center.',
+      'Памятки не найдены: каталог docs не смонтирован в control-center.')}</p>`;
+  })();
+  return loading;
+}
+
+/** Open a specific cheat sheet (the intro's "Read the basics"), loading the list first if needed. */
+export async function showDoc(file) {
+  await showDocs();
+  if (currentFile !== file && docs.some(d => d.file === file)) await openDoc(file);
 }
 
 async function getDoc(file) {
   if (cache.has(file)) return cache.get(file);
   try {
-    const r = await fetch('docs/' + encodeURIComponent(file));
-    if (!r.ok) return `# Ошибка\n\nНе удалось загрузить ${file} (${r.status})`;
+    const r = await fetch(`docs/${lang}/` + encodeURIComponent(file));
+    if (!r.ok) return T(`# Error\n\nFailed to load ${file} (${r.status})`, `# Ошибка\n\nНе удалось загрузить ${file} (${r.status})`);
     const text = await r.text();
     cache.set(file, text);
     return text;
   } catch {
-    return `# Нет связи с control-center\n\nПамятка «${file}» не загрузилась — попробуй ещё раз через пару секунд.`;
+    return T(`# No connection to control-center\n\nThe cheat sheet "${file}" didn't load — try again in a couple of seconds.`,
+      `# Нет связи с control-center\n\nПамятка «${file}» не загрузилась — попробуй ещё раз через пару секунд.`);
   }
 }
 
@@ -73,7 +82,7 @@ function renderList() {
     .filter(d => !query || d.hits > 0)
     .map(d => h('a', { class: 'doc-link' + (d.file === currentFile ? ' active' : ''), onclick: () => openDoc(d.file) },
       d.title, query ? h('span', { class: 'muted small' }, ` · ${d.hits}`) : null)));
-  if (query && !list.children.length) list.append(h('div', { class: 'muted small' }, 'ничего не найдено'));
+  if (query && !list.children.length) list.append(h('div', { class: 'muted small' }, T('nothing found', 'ничего не найдено')));
 }
 
 async function openDoc(file, scrollTop = true, anchor) {
@@ -84,7 +93,7 @@ async function openDoc(file, scrollTop = true, anchor) {
   if (query) highlight(el, query);
   renderList();
   const toc = $('#docs-toc');
-  toc.replaceChildren(h('div', { class: 'muted small', style: 'margin-bottom:4px' }, 'Содержание'),
+  toc.replaceChildren(h('div', { class: 'muted small', style: 'margin-bottom:4px' }, T('Contents', 'Содержание')),
     ...[...el.querySelectorAll('h2, h3')].map(x => h('a', {
       class: x.tagName.toLowerCase(), href: '#',
       onclick: e => { e.preventDefault(); x.scrollIntoView({ behavior: 'smooth', block: 'start' }); },
@@ -116,7 +125,7 @@ function highlight(root, q) {
   }
 }
 
-// ================================================================== Markdown → HTML (подмножество GFM)
+// ================================================================== Markdown → HTML (a GFM subset)
 
 function slug(s) {
   return s.toLowerCase().replace(/<[^>]+>/g, '').replace(/[^\p{L}\p{N}]+/gu, '-').replace(/^-|-$/g, '');

@@ -47,7 +47,8 @@ public sealed class ProcessorContext : IDisposable
                     if (dr.Error.IsError)
                     {
                         PaymentsFailed.Add();
-                        Log.Add("error", $"Не удалось записать платёж в payments: {dr.Error.Reason}", "delivery-timeout", "payment-fail");
+                        Log.Add("error", $"Не удалось записать платёж в payments: {dr.Error.Reason}",
+                            $"Failed to write the payment to payments: {dr.Error.Reason}", "delivery-timeout", "payment-fail");
                     }
                     else PaymentsSent.Add();
                 });
@@ -55,7 +56,7 @@ public sealed class ProcessorContext : IDisposable
         catch (KafkaException ex)
         {
             PaymentsFailed.Add();
-            Log.Add("error", $"payments: {ex.Error.Reason}", null, "payment-fail");
+            Log.Add("error", $"payments: {ex.Error.Reason}", $"payments: {ex.Error.Reason}", null, "payment-fail");
         }
     }
 
@@ -78,7 +79,7 @@ public sealed class ProcessorContext : IDisposable
         }
         catch (KafkaException ex)
         {
-            Log.Add("error", $"DLQ недоступна: {ex.Error.Reason}", null, "dlq-fail");
+            Log.Add("error", $"DLQ недоступна: {ex.Error.Reason}", $"DLQ unavailable: {ex.Error.Reason}", null, "dlq-fail");
         }
     }
 

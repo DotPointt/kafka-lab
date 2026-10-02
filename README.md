@@ -1,85 +1,88 @@
-# Kafka Lab — визуальный учебный стенд Apache Kafka
+# Kafka Lab — a visual Apache Kafka learning lab
 
-Живая схема кластера Kafka, в которой видно, как сообщения текут от producer-ов к партициям и consumer group-ам, и в которую можно **ломать**: останавливать и «убивать» брокеры, замораживать процессы, добавлять задержки и потери пакетов, устраивать split brain, ронять и вешать консюмеров. Каждое изменение сразу видно на схеме и объяснено в журнале событий («почему?»).
+**English** · [Русский](README.ru.md)
 
-**🌐 Онлайн-демо: https://dotpointt.github.io/kafka-lab/** — памятки, карточки и запись работы стенда (падение брокера, ребаланс, крэш консюмера, lag). Ломать кластер своими руками можно только в локальной версии — она поднимается одной командой (см. «Быстрый старт»).
+A live map of a Kafka cluster that shows messages flowing from producers to partitions and consumer groups — and that you can **break**: stop and "kill" brokers, freeze processes, add latency and packet loss, stage a split brain, crash and hang consumers. Every change shows up on the map immediately and is explained in the event log ("why?").
 
-![Живая схема Kafka Lab](docs/screenshot.png)
+**🌐 Online demo: https://dotpointt.github.io/kafka-lab/** — cheat sheets, flashcards and a recording of the lab in action (a broker failure, a rebalance, a consumer crash, lag). Breaking the cluster with your own hands works only in the local version — it starts with one command (see "Quick start").
 
-## Что внутри
+![The Kafka Lab live map](docs/screenshot.png)
 
-| Компонент | Язык | Что делает |
+## What's inside
+
+| Component | Language | What it does |
 |---|---|---|
-| **3 брокера Kafka 4.1** (KRaft, без ZooKeeper) | — | Каждый узел — брокер и контроллер; RF=3, min.insync.replicas=2 |
-| **order-service** | C# (.NET 10, Confluent.Kafka) | Producer заказов (ключ = клиент) + профили в compacted-топик; «аудит доставки» ловит потери и дубли |
-| **order-processor** | C# | Consumer group `order-processing`: N консюмеров на лету, крэш/зависание/рестарт, ретраи, DLQ, consume → produce |
-| **analytics** | Python (confluent-kafka) | Вторая consumer group: pause/resume, перечитывание истории, масштабирование `--scale` |
-| **clickstream-generator** | Go (franz-go) | Нагрузочный producer до 100k msg/s: batching, сжатие, acks, backpressure |
-| **control-center** | C# (ASP.NET, AdminClient, Docker API) | Мониторинг кластера, имитация сбоев, веб-интерфейс |
+| **3 Kafka 4.1 brokers** (KRaft, no ZooKeeper) | — | Every node is a broker and a controller; RF=3, min.insync.replicas=2 |
+| **order-service** | C# (.NET 10, Confluent.Kafka) | Order producer (key = customer) + profiles in a compacted topic; a "delivery audit" catches losses and duplicates |
+| **order-processor** | C# | Consumer group `order-processing`: N consumers on the fly, crash/hang/restart, retries, DLQ, consume → produce |
+| **analytics** | Python (confluent-kafka) | A second consumer group: pause/resume, replaying history, scaling with `--scale` |
+| **clickstream-generator** | Go (franz-go) | A load producer up to 100k msg/s: batching, compression, acks, backpressure |
+| **control-center** | C# (ASP.NET, AdminClient, Docker API) | Cluster monitoring, failure injection, the web UI |
 
-В интерфейсе:
-- **Живая схема** — producers → брокеры с партициями (лидеры, ISR, offline) → consumer groups с участниками и lag; анимация потоков сообщений и репликации.
-- **Сбои** — у каждого брокера: Stop (graceful), Kill (SIGKILL), Pause, Сеть (задержка, потери, полная изоляция, split brain). У сервисов — stop/kill/pause, у консюмеров — крэш, зависание, рестарт.
-- **Нагрузка** — ползунки скорости, acks, идемпотентность, linger, сжатие, горячий ключ, время обработки, процент ошибок, стратегия ребаланса, KIP-848, static membership.
-- **🎓 Сценарии** — 15 пошаговых лабораторных: ключи и партиции, ребаланс, lag, падение брокера, min.insync.replicas, потеря данных при acks=1 («зомби-лидер»), дубли при ретраях, KRaft, DLQ, compaction…
-- **Журнал событий** — «Выборы лидера: orders-3 (1→2)», «ISR сократился», «Группа: Stable → PreparingRebalance»… у каждого события кнопка «почему?».
-- **Партиции и offset-ы, Графики, Сообщения** — таблица lag по партициям, графики за 5 минут, чтение последних сообщений и отправка своих (poison pill, tombstone).
-- **Памятки** — 10 конспектов (основы, producer, consumer, репликация и KRaft, хранение, гарантии, эксплуатация и CLI, шпаргалка, Kafka vs RabbitMQ, устройство стенда).
-- **Карточки** — 60+ вопросов с интервальным повторением (система Лейтнера), прогресс сохраняется в браузере.
+In the UI:
+- **Live map** — producers → brokers with partitions (leaders, ISR, offline) → consumer groups with members and lag; animated message and replication flows.
+- **Failures** — on every broker: Stop (graceful), Kill (SIGKILL), Pause, Network (latency, loss, full isolation, split brain). Services: stop/kill/pause; consumers: crash, hang, restart.
+- **Load** — sliders for rate, acks, idempotence, linger, compression, hot key, processing time, error rate, rebalance strategy, KIP-848, static membership.
+- **🎓 Scenarios** — 15 step-by-step labs: keys and partitions, rebalancing, lag, broker failure, min.insync.replicas, data loss with acks=1 (the "zombie leader"), duplicates from retries, KRaft, DLQ, compaction…
+- **Event log** — "Leader election: orders-3 (1→2)", "ISR shrank", "Group: Stable → PreparingRebalance"… every event has a "why?" button.
+- **Partitions & offsets, Charts, Messages** — a per-partition lag table, 5-minute charts, reading the latest messages and sending your own (poison pill, tombstone).
+- **Cheat sheets** — 10 study notes (basics, producer, consumer, replication and KRaft, storage, guarantees, operations and CLI, a one-page cheat sheet, Kafka vs RabbitMQ, how the lab works).
+- **Flashcards** — 60+ questions with spaced repetition (the Leitner system); progress is saved in the browser.
+- **Two languages** — English (default) and Russian, switch with EN/RU in the header.
 
-## Быстрый старт
+## Quick start
 
-Нужен Docker Desktop (≈ 4 GB свободной памяти для контейнеров).
+You need Docker Desktop (≈ 4 GB of free memory for the containers).
 
 ```bash
 docker compose up -d --build
 ```
 
-Через 1–2 минуты откройте **http://localhost:8080**.
+Open **http://localhost:8080** in 1–2 minutes.
 
-| Адрес | Что |
+| Address | What |
 |---|---|
-| http://localhost:8080 | Kafka Lab (визуализация, сценарии, памятки) |
-| localhost:19092, 19093, 19094 | Брокеры для клиентов с хоста (IDE, kcat) |
-| http://localhost:8081 / 8082 / 8084 | HTTP API order-service / order-processor / clickstream-generator |
-| http://localhost:8090 | kafka-ui (только с `docker compose --profile ui up -d`) |
+| http://localhost:8080 | Kafka Lab (visualization, scenarios, cheat sheets) |
+| localhost:19092, 19093, 19094 | Brokers for clients on the host (IDE, kcat) |
+| http://localhost:8081 / 8082 / 8084 | HTTP API of order-service / order-processor / clickstream-generator |
+| http://localhost:8090 | kafka-ui (only with `docker compose --profile ui up -d`) |
 
-Остановить: `docker compose down` (данные сохранятся) или `docker compose down -v` (стереть всё).
+Stop: `docker compose down` (the data is kept) or `docker compose down -v` (wipe everything).
 
-Пересобрать один сервис после правок, не трогая брокеры: `docker compose up -d --build --no-deps order-service`
-(общий `docker compose up -d --build` пересоздаёт и брокеры — данные останутся на томах, но кластер на минуту перезапустится).
+Rebuild one service after changes without touching the brokers: `docker compose up -d --build --no-deps order-service`
+(a plain `docker compose up -d --build` recreates the brokers too — the data stays on the volumes, but the cluster restarts for a minute).
 
-## С чего начать
+## Where to start
 
-1. Откройте **Памятки → «Kafka за 10 минут»** (5 минут чтения).
-2. Вернитесь на **Живую схему**, наведите мышь на чипы партиций, участников групп и метрики — везде есть подсказки.
-3. Нажмите **🎓 Сценарии** и пройдите по порядку: сначала «база», потом «сбои», потом «гарантии».
-4. Закрепляйте во вкладке **Карточки** (клавиши: пробел — перевернуть, 1/2/3 — оценка).
+1. Open **Cheat sheets → "Kafka in 10 minutes"** (a 5-minute read). The **Kafka Lab** logo in the header always takes you there.
+2. Go back to the **Live map** and hover over partition chips, group members and metrics — there are tooltips everywhere.
+3. Click **🎓 Scenarios** and go through them in order: "basics" first, then "failures", then "guarantees".
+4. Reinforce it on the **Flashcards** tab (keys: space — flip, 1/2/3 — rate yourself).
 
-## Онлайн-версия (GitHub Pages)
+## The online version (GitHub Pages)
 
-Workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) публикует статическую копию UI. На Pages нет бэкенда (Kafka, Docker, control-center), поэтому:
+The [`.github/workflows/pages.yml`](.github/workflows/pages.yml) workflow publishes a static copy of the UI. Pages has no backend (Kafka, Docker, control-center), so:
 
-- «Памятки» и «Карточки» работают полностью;
-- «Живая схема» проигрывает **запись реального стенда** — настоящие снимки кластера раз в секунду и настоящий журнал событий ([`demo/recording.json`](demo/recording.json)), с паузой, перемоткой и пояснениями к каждому моменту;
-- кнопки сбоев и настройки в онлайн-версии показывают подсказку о локальном запуске.
+- the cheat sheets and flashcards work fully;
+- the live map replays **a recording of the real lab** — real cluster snapshots once a second and the real event log ([`demo/recording.json`](demo/recording.json)), with pause, seeking and notes on every key moment;
+- the failure buttons and settings show a hint about running the lab locally.
 
-Перезаписать демо на своём стенде: `python tools/record-demo.py` (около 4 минут), затем закоммитить `demo/recording.json`.
+Re-record the demo on your own lab: `python tools/record-demo.py` (about 4 minutes), then commit `demo/recording.json`.
 
-## Структура репозитория
+## Repository layout
 
 ```text
-docker-compose.yml           кластер + сервисы
-infra/kafka/                 образ брокера (+ iproute2 для tc) и скрипт создания топиков
+docker-compose.yml           cluster + services
+infra/kafka/                 broker image (+ iproute2 for tc) and the topic creation script
 services/order-service/      C# producer
 services/order-processor/    C# consumer group
 services/analytics/          Python consumer group
 services/clickstream-generator/  Go producer
-services/control-center/     C# мониторинг + сбои + UI (wwwroot)
-docs/                        памятки (Markdown, показываются во вкладке «Памятки»)
-demo/recording.json          запись стенда для онлайн-демо
-tools/record-demo.py         скрипт записи демо
-.github/workflows/pages.yml  публикация на GitHub Pages
+services/control-center/     C# monitoring + failures + UI (wwwroot)
+docs/en/, docs/ru/           cheat sheets (Markdown, shown on the "Cheat sheets" tab)
+demo/recording.json          the lab recording for the online demo
+tools/record-demo.py         the demo recording script
+.github/workflows/pages.yml  publishing to GitHub Pages
 ```
 
-Подробности об устройстве — в [docs/10-about-lab.md](docs/10-about-lab.md).
+More on how it works: [docs/en/10-about-lab.md](docs/en/10-about-lab.md).

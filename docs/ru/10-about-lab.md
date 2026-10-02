@@ -26,7 +26,7 @@
 | `order-processor` | C#, Confluent.Kafka | Consumer group `order-processing`, N консюмеров в одном процессе, consume → transform → produce, ретраи, DLQ | `ConsumerWorker.cs` — цикл Consume/StoreOffset, колбэки ребаланса, крэш через Dispose без Close; `ConsumerManager.cs` |
 | `analytics` | Python, confluent-kafka | Consumer group `analytics`, pause/resume, масштабируется `--scale` | `app.py` — колбэки on_assign/on_revoke, pause() |
 | `clickstream-generator` | Go, franz-go | Высоконагруженный producer, batching/compression/acks | `main.go` — kgo-опции, TryProduce и backpressure |
-| `control-center` | C#, ASP.NET + Confluent.Kafka AdminClient | Мониторинг, имитация сбоев, UI | `Monitoring/ClusterMonitor.cs`, `KafkaInspector.cs`, `EventDetector.cs`, `Chaos/ChaosManager.cs` |
+| `control-center` | C#, ASP.NET + Confluent.Kafka AdminClient | Мониторинг, имитация сбоев, UI | `Monitoring/ClusterMonitor.cs`, `KafkaInspector.cs`, `GroupProbe.cs`, `EventDetector.cs`, `Chaos/ChaosManager.cs` |
 | `kafka-1..3` | Apache Kafka 4.1 (KRaft, combined) | Брокеры + контроллеры | `docker-compose.yml`, `infra/kafka/` |
 | `kafka-ui` (опционально) | kafbat/kafka-ui | Сторонний UI для просмотра топиков | `docker compose --profile ui up -d` → http://localhost:8090 |
 
@@ -59,7 +59,7 @@
 1. Docker API — состояние контейнеров.
 2. `GetMetadata` — брокеры, лидеры, реплики, ISR.
 3. `ListOffsets` (earliest/latest) — границы логов; скорости считаются по приращению.
-4. `ListConsumerGroups` + `DescribeConsumerGroups` + `ListConsumerGroupOffsets` — участники, назначения, коммиты → lag.
+4. `ListConsumerGroups` + `DescribeConsumerGroups` + `ListConsumerGroupOffsets` — участники, назначения, коммиты → lag. Этот опрос идёт в отдельном дочернем процессе (`GroupProbe`, см. грабли ниже).
 5. `/api/stats` сервисов — то, что видят сами клиенты.
 6. Раз в 4 c — `kafka-metadata-quorum.sh describe --replication` внутри брокера (кто активный контроллер).
 7. `EventDetector` сравнивает снимок с предыдущим и пишет события в журнал; браузер получает всё по SSE (`/api/stream`).
@@ -87,17 +87,19 @@ docker compose down                             # остановить (данн
 docker compose down -v                          # остановить и стереть все данные
 ```
 
-UI (`services/control-center/wwwroot`) и памятки (`docs/`) смонтированы в контейнер — правки видны после обновления страницы.
+UI (`services/control-center/wwwroot`) и памятки (`docs/en`, `docs/ru`) смонтированы в контейнер — правки видны после обновления страницы.
 
 ## Онлайн-версия на GitHub Pages
 
 Статическая копия UI публикуется workflow `.github/workflows/pages.yml`. Бэкенда там нет, поэтому `config.js` переключает UI в демо-режим: вместо SSE-стрима control-center проигрывается `demo/recording.json` — запись настоящего стенда (снимки раз в секунду + журнал событий + последние сообщения топиков) с пояснениями к ключевым моментам. Запись делает `tools/record-demo.py`: подключается к `/api/stream`, по таймлайну убивает и поднимает брокер, добавляет и «роняет» консюмеров, ставит analytics на паузу, добавляет задержку сети. Чтобы обновить демо — запусти скрипт на работающем стенде и закоммить новый файл.
 
+Интерфейс и памятки есть на двух языках: английском (по умолчанию) и русском — переключатель EN/RU в шапке.
+
 ## Грабли, найденные при создании стенда
 
 Реальные проблемы, которые всплыли при разработке, — сами по себе хорошие уроки:
 
-1. **Падение librdkafka в admin-API.** Control-center падал с `SIGSEGV` / `double free detected` ровно в момент остановки брокера. Поиск методом исключения (отключали вызовы AdminClient по одному под сбоями брокеров) показал: рушит процесс `ListConsumerGroupsAsync`. Похожий баг есть и в `ListConsumerGroupOffsets` на AdminClient без `group.id` ([librdkafka#5611](https://github.com/confluentinc/librdkafka/pull/5611), [klag-exporter#111](https://github.com/softwaremill/klag-exporter/issues/111)). Обход: группы обнаруживаются «старым» `ListGroups`, а коммиты читаются через admin-обёртку над handle консюмера (`DependentAdminClientBuilder`). Мораль: код мониторинга обязательно тестируют **под сбоями**, а не на здоровом кластере.
+1. **Падение librdkafka в admin-API.** Control-center падал с `SIGSEGV` / `double free detected` ровно в момент остановки брокера. Поиск методом исключения (отключали вызовы AdminClient по одному под сбоями брокеров) показал: процесс рушат admin-запросы к координатору групп (`ListConsumerGroups`, `DescribeConsumerGroups`, `ListConsumerGroupOffsets`), если брокер пропадает посреди запроса. Похожий баг описан и в апстриме ([librdkafka#5611](https://github.com/confluentinc/librdkafka/pull/5611), [klag-exporter#111](https://github.com/softwaremill/klag-exporter/issues/111)). Решение: опрос групп вынесен в отдельный дочерний процесс (`GroupProbe.cs`) — если он падает, супервизор запускает его снова, а control-center и UI продолжают работать (группы на секунду помечаются устаревшими). Мораль: код мониторинга обязательно тестируют **под сбоями**, а не на здоровом кластере.
 2. **Разные partitioner-ы.** librdkafka по умолчанию хеширует ключ CRC32, Java — murmur2. Пока в order-service не включили `Partitioner.Murmur2Random`, предсказание партиции в UI (murmur2, как в Java) не совпадало с реальностью.
 3. **Данные брокера внутри контейнера.** Первая версия хранила лог в файловой системе контейнера; `docker compose up --build` пересоздал брокеры — топики пропали, offset-ы начались с нуля, а «аудит доставки» честно закричал о потерях. Теперь данные на именованных томах.
 4. **Фатальные ошибки идемпотентного producer-а.** При ретраях на фоне таймаутов или `NOT_ENOUGH_REPLICAS` librdkafka иногда сообщает `Fatal error: Unable to reconstruct MessageSet … unable to guarantee consistency`. После этого экземпляр producer-а бесполезен — order-service ловит `IsFatal` в error handler и создаёт новый. Без этого сервис молча перестал бы отправлять заказы.
