@@ -37,6 +37,7 @@
   --radius-sm: 6px;
   --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", Consolas, monospace;
   --sans: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+  --topbar-h: 54px; /* the real header height, kept up to date by main.js: the status pills can wrap to a second line */
 }
 
 * { box-sizing: border-box; }
@@ -367,7 +368,7 @@ table.grid tr:hover td { background: rgba(122,162,247,.04); }
 .drawer {
   width: 0; overflow: hidden; flex-shrink: 0;
   background: var(--panel); border-left: 1px solid var(--border);
-  position: sticky; top: 50px; height: calc(100vh - 50px); z-index: 10; /* above the map columns and the flow particles */
+  position: sticky; top: var(--topbar-h); height: calc(100vh - var(--topbar-h)); z-index: 10; /* above the map columns and the flow particles */
   display: flex; flex-direction: column; transition: width .2s;
 }
 .drawer.open { width: 430px; }
@@ -395,7 +396,7 @@ table.grid tr:hover td { background: rgba(122,162,247,.04); }
 
 /* ---------- docs ---------- */
 .docs-layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 24px; padding: 16px 24px 60px; max-width: 1400px; margin: 0 auto; }
-.docs-nav { position: sticky; top: 66px; align-self: start; max-height: calc(100vh - 80px); overflow: auto; }
+.docs-nav { position: sticky; top: calc(var(--topbar-h) + 12px); align-self: start; max-height: calc(100vh - var(--topbar-h) - 26px); overflow: auto; }
 .docs-nav input { width: 100%; margin-bottom: 10px; }
 .doc-link { display: block; padding: 5px 9px; border-radius: 7px; color: var(--text-2); text-decoration: none; cursor: pointer; }
 .doc-link:hover { background: var(--panel-2); color: var(--text); }
