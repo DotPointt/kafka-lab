@@ -7,7 +7,7 @@ import { initLive } from './live.js';
 import { initFlow } from './flow.js';
 import { initCharts } from './charts.js';
 import { initPartitions, initMessages, initEvents, initSubtabs, renderHealth, heal } from './panels.js';
-import { initScenarios, openScenarios } from './scenarios.js';
+import { initScenarios, openScenarios, resetLab } from './scenarios.js';
 import { initDocs, showDocs } from './docs.js';
 import { initCards, showCards } from './flashcards.js';
 import { initIntro } from './intro.js';
@@ -57,5 +57,6 @@ initIntro(openTab);
 store.onSnapshot(renderHealth);
 $('#btn-heal').addEventListener('click', heal);
 $('#btn-scenarios').addEventListener('click', () => { openTab('live'); openScenarios(); });
+$('#btn-reset').addEventListener('click', resetLab);
 
 connectStream();
