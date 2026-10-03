@@ -1,6 +1,6 @@
 // HTTP-вызовы к control-center и SSE-подписка.
 // Пути относительные: UI работает и в корне (локальный стенд), и в подкаталоге (GitHub Pages: /kafka-lab/).
-import { toast } from './util.js';
+import { h, toast } from './util.js';
 import { store } from './store.js';
 import { T, isRu } from './i18n.js';
 
@@ -12,8 +12,13 @@ let demoMessages = null; // записанные сообщения топико
 export function setDemoMessages(messages) { demoMessages = messages; }
 
 export function demoNotice() {
-  toast(T('This is a recording of the real lab: you can control the cluster only in the local lab (docker compose up -d --build).',
-    'Это запись реального стенда: управлять кластером можно только на локальном стенде (docker compose up -d --build).'), 'info', 6000);
+  const repoText = T('the repository', 'репозитории');
+  toast([
+    T('This is a recording of the real lab: you can control the cluster only in the local lab (instructions in ',
+      'Это запись реального стенда: управлять кластером можно только на локальном стенде (инструкция в '),
+    REPO_URL ? h('a', { href: REPO_URL, target: '_blank', rel: 'noopener' }, repoText) : repoText,
+    '): ', h('code', {}, 'docker compose up -d --build'),
+  ], 'info', 6000);
 }
 
 /** В демо-режиме показывает подсказку и возвращает true — действие выполнять не нужно. */
