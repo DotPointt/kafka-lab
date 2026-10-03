@@ -508,6 +508,7 @@ table.grid tr:hover td { background: rgba(122,162,247,.04); }
 .toast { background: var(--panel-2); border: 1px solid var(--border-2); border-left: 3px solid var(--info); border-radius: 8px; padding: 8px 12px; box-shadow: 0 8px 24px rgba(0,0,0,.5); font-size: 12.5px; animation: slidein .2s; }
 .toast.err { border-left-color: var(--err); }
 .toast.ok { border-left-color: var(--ok); }
+.toast code { background: var(--bg-2); border: 1px solid var(--border); padding: 0 5px; border-radius: 4px; white-space: nowrap; }
 @keyframes slidein { from { transform: translateY(10px); opacity: 0; } to { transform: none; opacity: 1; } }
 
 .muted { color: var(--muted); }

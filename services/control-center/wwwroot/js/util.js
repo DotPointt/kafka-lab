@@ -138,11 +138,14 @@ export function partitionFor(key, numPartitions) {
 }
 
 // ---------- тосты ----------
-export function toast(text, kind = 'info', ms = 4500) {
+/** content — строка или узлы (массив: текст + ссылка). Пока курсор над тостом, он не исчезает — ссылку можно успеть нажать. */
+export function toast(content, kind = 'info', ms = 4500) {
   const box = $('#toasts');
-  const el = h('div', { class: `toast ${kind}` }, text);
+  const el = h('div', { class: `toast ${kind}` }, content);
   box.append(el);
-  setTimeout(() => el.remove(), ms);
+  let timer = setTimeout(() => el.remove(), ms);
+  el.addEventListener('mouseenter', () => clearTimeout(timer));
+  el.addEventListener('mouseleave', () => { timer = setTimeout(() => el.remove(), 2000); });
 }
 
 // ---------- тултип (делегирование по data-tip) ----------
