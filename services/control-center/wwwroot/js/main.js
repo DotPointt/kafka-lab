@@ -30,7 +30,16 @@ function initTabs() {
   return open;
 }
 
+/** Sticky elements below the header (the Scenarios drawer, the cheat sheet contents) sit under its real height. */
+function trackTopbarHeight() {
+  const bar = $('.topbar');
+  const set = () => document.documentElement.style.setProperty('--topbar-h', `${bar.offsetHeight}px`);
+  new ResizeObserver(set).observe(bar);
+  set();
+}
+
 applyStatic();
+trackTopbarHeight();
 initTooltips();
 const openTab = initTabs();
 initLive();
