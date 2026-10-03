@@ -514,10 +514,11 @@ function sparkline(canvas, values, color = '#f59e0b') {
   ctx.clearRect(0, 0, w, hgt);
   const vals = values.slice(-120);
   const max = Math.max(10, ...vals.map(v => v ?? 0));
+  const top = 14; // the caption band: the line never climbs into it
   ctx.beginPath();
   vals.forEach((v, i) => {
     const x = (i / Math.max(1, vals.length - 1)) * w;
-    const y = hgt - 2 - ((v ?? 0) / max) * (hgt - 6);
+    const y = hgt - 2 - ((v ?? 0) / max) * (hgt - 2 - top);
     i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
   });
   ctx.strokeStyle = color; ctx.lineWidth = 1.5; ctx.stroke();
