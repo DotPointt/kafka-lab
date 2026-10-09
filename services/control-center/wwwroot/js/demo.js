@@ -41,7 +41,7 @@ export async function startDemo() {
   bar.classList.remove('hidden');
   bar.textContent = T('Loading the lab recording…', 'Загружаем запись стенда…');
   try {
-    const r = await fetch('demo/recording.json', { cache: 'no-cache' }) // revalidate: Pages caches files for 10 min;
+    const r = await fetch('demo/recording.json', { cache: 'no-cache' }); // revalidate: Pages caches files for 10 min
     if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
     rec = await r.json();
   } catch (e) {
