@@ -34,6 +34,7 @@ builder.Services.AddSingleton<SnapshotHub>();
 builder.Services.AddSingleton<KafkaInspector>();
 builder.Services.AddSingleton<ChaosManager>();
 builder.Services.AddSingleton<ServicePoller>();
+builder.Services.AddSingleton<TraceService>();
 builder.Services.AddSingleton<MessagePeeker>();
 builder.Services.AddSingleton<QuorumMonitor>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<QuorumMonitor>());
@@ -331,6 +332,11 @@ app.MapGet("/api/topics/{topic}/messages", (string topic, int? partition, int? l
         : hub.Latest?.Topics.FirstOrDefault(t => t.Name == topic)?.Partitions.Select(p => p.Id).ToList() ?? [0];
     return peeker.PeekAsync(topic, parts, limit ?? 30, ct);
 });
+
+// ------------------------------------------------------------------ трассировка одного события (correlation id)
+
+app.MapGet("/api/trace/{cid}", (string cid, TraceService traces, CancellationToken ct) => traces.TraceAsync(cid, ct));
+app.MapGet("/api/traces/recent", (TraceService traces, CancellationToken ct) => traces.RecentAsync(ct));
 
 // ------------------------------------------------------------------ сервисы (прокси) и документы
 

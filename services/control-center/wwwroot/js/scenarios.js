@@ -3,6 +3,7 @@ import { h, $, toast, partitionFor } from './util.js';
 import { store } from './store.js';
 import { svc, actions, demoGuard } from './api.js';
 import { showSubtab } from './panels.js';
+import { openTrace } from './trace.js';
 import { T } from './i18n.js';
 
 // ------------------------------------------------------------------ helpers
@@ -59,6 +60,7 @@ export async function resetLab() {
 const A = (label, run, kind = '') => ({ label, run, kind });
 
 const crashFirst = () => { const i = processorInstances()[0]; return i && svc.post('order-processor', `instances/${i.id}/crash`); };
+const sendTraced = async () => { const r = await svc.post('order-service', 'orders', {}); if (r?.correlationId) openTrace(r.correlationId); };
 const addConsumer = () => svc.post('order-processor', 'instances');
 
 // ------------------------------------------------------------------ scenarios
@@ -120,6 +122,53 @@ const SCENARIOS = [
       <li>Без ключа — sticky partitioner: batch целиком в одну партицию, потом следующая.</li>
       <li>Неравномерные ключи → горячие партиции → один консюмер перегружен, масштабирование не помогает.</li>
       <li>librdkafka по умолчанию использует CRC32 (<code>consistent_random</code>), а не murmur2 — для совместимости с Java ставят <code>partitioner=murmur2_random</code>.</li></ul>`),
+  },
+  {
+    id: 'trace', level: 1, title: T('Trace one event: correlation ID', 'Трассировка одного события: correlation ID'),
+    goal: T('Follow one order through every service by its correlation id and check that each service changed its business state exactly once — not lost, not duplicated.',
+      'Проследить один заказ через все сервисы по correlation id и проверить, что каждый сервис сменил бизнес-состояние ровно один раз — без потерь и дублей.'),
+    steps: [
+      {
+        text: T(`Every order carries a <code>correlation-id</code> header. Each service records what it did with the event under this id, and
+          order-processor copies the header into payments and the DLQ. Send one order and open its trace.`,
+          `У каждого заказа есть заголовок <code>correlation-id</code>. Каждый сервис записывает под этим id, что сделал с событием,
+          а order-processor копирует заголовок в payments и в DLQ. Отправь один заказ и открой его трассу.`),
+        watch: T('The "🔎 Trace an event" tab opens: Publish → Kafka log → Processing → Payment → Report, each ×1. The business state goes CREATED → PUBLISHED → PROCESSING → PAID → REPORTED, the verdict is ✓ Exactly once.',
+          'Откроется вкладка «🔎 Трассировка события»: Публикация → Лог Kafka → Обработка → Платёж → Отчёт, везде ×1. Бизнес-состояние: CREATED → PUBLISHED → PROCESSING → PAID → REPORTED, вердикт — ✓ Ровно один раз.'),
+        actions: [A(T('📨 Send a traced order', '📨 Отправить отслеживаемый заказ'), sendTraced)],
+      },
+      {
+        text: T('Now break "exactly once": raise the load to 200/s and crash a consumer — no commit, no LeaveGroup.',
+          'Теперь сломаем «ровно один раз»: поднимем нагрузку до 200/с и уроним консюмер — без коммита и без LeaveGroup.'),
+        watch: T('After the rebalance the orders it processed but didn\'t commit are delivered again. "⚠ Problems" fills with ids marked "processed again, paid twice, counted twice". Open one: Processing ×2 and Payment ×2 by different processors at the same offset — a double charge — and the payment is counted twice in the report.',
+          'После ребаланса заказы, которые он обработал, но не закоммитил, придут повторно. В «⚠ Проблемы» появятся id с пометками «обработан повторно, оплачен дважды, учтён дважды». Открой любой: Обработка ×2 и Платёж ×2 разными процессорами по одному offset — двойное списание, — и платёж дважды учтён в отчёте.'),
+        actions: [A(T('200/s', '200/с'), () => order({ ratePerSec: 200 })), A(T('💥 Crash a consumer', '💥 Крэш консюмера'), crashFirst),
+          A(T('+1 consumer', '+1 консюмер'), addConsumer), A(T('Back to 20/s', 'Вернуть 20/с'), () => order({ ratePerSec: 20 }))],
+      },
+      {
+        text: T('Dead letters: turn on 30% processing errors.', 'Мёртвые письма: включим 30% ошибок обработки.'),
+        watch: T('DLQ events appear in Problems: Processing ends in DEAD_LETTERED, Payment and the payment report are "not needed". The business state stops at DEAD_LETTERED instead of PAID — the order is not lost, it waits for a human in orders.dlq.',
+          'В «Проблемах» появятся события с DLQ: обработка заканчивается DEAD_LETTERED, платёж и отчёт по платежу «не нужны». Бизнес-состояние останавливается на DEAD_LETTERED вместо PAID — заказ не потерян, он ждёт разбора в orders.dlq.'),
+        actions: [A(T('30% errors', '30% ошибок'), () => proc({ failureRatePercent: 30 })), A(T('Back to 0%', 'Вернуть 0%'), () => proc({ failureRatePercent: 0 }))],
+      },
+      {
+        text: T('Losses: run the "Zombie leader" scenario with this tab open.', 'Потери: пройди сценарий «Зомби-лидер», не закрывая эту вкладку.'),
+        watch: T('Lost orders show up in Problems: Publish ✓ ×1, Kafka log ✗ LOST, nobody downstream ever saw them, the business state is LOST. The client got "OK" for these orders — without a correlation id you would never find them.',
+          'В «Проблемах» появятся потерянные заказы: Публикация ✓ ×1, Лог Kafka ✗ LOST, дальше по цепочке их никто не видел, бизнес-состояние — LOST. Клиент получил «OK» по этим заказам — без correlation id их было бы не найти.'),
+      },
+      {
+        text: T('Put everything back.', 'Вернём всё назад.'),
+        actions: [A(T('Reset', 'Сбросить'), async () => { await order({ ratePerSec: 20 }); await proc({ failureRatePercent: 0 }); await setProcessorCount(2); })],
+      },
+    ],
+    summary: T(`<ul><li>A correlation id links all messages of one business operation across topics and services. Put it in a header, and copy it into everything you produce.</li>
+      <li>Counters say <i>that</i> something went wrong; a trace says <i>which</i> operation and <i>where</i>: duplicated in processing, lost in the log, parked in the DLQ.</li>
+      <li>"Exactly once" for the business means: every service changed the state once. At-least-once delivery makes ×2 normal — processing must be idempotent (dedupe by order id / correlation id).</li>
+      <li>In production this is OpenTelemetry with the W3C <code>traceparent</code> header — the Kafka client instrumentations propagate it automatically.</li></ul>`,
+      `<ul><li>Correlation id связывает все сообщения одной бизнес-операции через топики и сервисы. Кладите его в заголовок и копируйте во всё, что производите.</li>
+      <li>Счётчики говорят, <i>что</i> что-то пошло не так; трасса говорит, <i>какая</i> операция и <i>где</i>: задвоилась в обработке, потерялась в логе, ушла в DLQ.</li>
+      <li>«Ровно один раз» для бизнеса — это когда каждый сервис сменил состояние один раз. При at-least-once ×2 — норма, поэтому обработка должна быть идемпотентной (дедупликация по id заказа / correlation id).</li>
+      <li>В production это OpenTelemetry с заголовком W3C <code>traceparent</code> — инструментации Kafka-клиентов передают его автоматически.</li></ul>`),
   },
   {
     id: 'rebalance', level: 1, title: T('Consumer group: scaling and rebalancing', 'Consumer group: масштабирование и ребаланс'),

@@ -17,8 +17,9 @@ import signal
 import socket
 import threading
 import time
-from collections import Counter, deque
+from collections import Counter, OrderedDict, deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, unquote, urlparse
 
 from confluent_kafka import Consumer, KafkaError, KafkaException
 
@@ -98,6 +99,63 @@ S = State()
 running = True
 
 
+class TraceLog:
+    """correlation id → шаги, которые ЭТОТ экземпляр выполнил по бизнес-транзакции (ограничено по размеру).
+
+    Бизнес-состояние в аналитике — «заказ/платёж учтён в отчёте» (COUNTED). Если одно и то же событие
+    учтено дважды (повторная доставка после ребаланса или рестарта), выручка в отчёте завышена — это дубль.
+    """
+
+    CAPACITY = 50000
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.steps = OrderedDict()
+        self.anomalies = deque(maxlen=60)
+
+    def add(self, cid, step, state, topic=None, partition=None, offset=None, detail=None):
+        if not cid:
+            return 0
+        item = {"ts": int(time.time() * 1000), "service": "analytics", "instance": CLIENT_ID, "step": step, "state": state,
+                "topic": topic, "partition": partition, "offset": offset, "detail": detail}
+        with self.lock:
+            lst = self.steps.get(cid)
+            if lst is None:
+                lst = self.steps[cid] = []
+                while len(self.steps) > self.CAPACITY:
+                    self.steps.popitem(last=False)
+            if len(lst) < 40:
+                lst.append(item)
+            return sum(1 for x in lst if x["step"] == step)
+
+    def anomaly(self, cid, kind, detail):
+        with self.lock:
+            self.anomalies.appendleft({"ts": int(time.time() * 1000), "cid": cid, "kind": kind, "instance": CLIENT_ID, "detail": detail})
+
+    def get(self, cid):
+        with self.lock:
+            return list(self.steps.get(cid, []))
+
+    def get_many(self, ids):
+        with self.lock:
+            return {i: list(self.steps[i]) for i in ids[:100] if i in self.steps}
+
+    def recent(self):
+        with self.lock:
+            return {"service": "analytics", "recent": [], "anomalies": list(self.anomalies)}
+
+
+TRACE = TraceLog()
+TRACE_HEADER = "correlation-id"
+
+
+def header(msg, name):
+    for k, v in msg.headers() or []:
+        if k == name and v is not None:
+            return v.decode("utf-8", "replace")
+    return None
+
+
 def fmt(partitions):
     return ", ".join(f"{p.topic}-{p.partition}" for p in sorted(partitions, key=lambda p: (p.topic, p.partition)))
 
@@ -147,6 +205,14 @@ def process(msg):
             S.e2e[topic].append((now_ms, now_ms - ts))
         if not isinstance(value, dict):
             return
+        if topic in ("orders", "payments"):
+            # Бизнес-состояние в аналитике: событие учтено в отчёте. Повторный учёт — дубль (выручка завышена).
+            cid = header(msg, TRACE_HEADER) or value.get("correlationId")
+            step = "counted-order" if topic == "orders" else "counted-payment"
+            ident = value.get("orderId", "?")
+            times = TRACE.add(cid, step, "COUNTED", topic, msg.partition(), msg.offset(), f"{ident} · {value.get('amount', '?')} {value.get('currency', '')}".strip())
+            if times > 1:
+                TRACE.anomaly(cid, "duplicate-count", f"{topic}: {ident} counted {times} times")
         if topic == "orders":
             amount = float(value.get("amount", 0))
             S.orders += 1
@@ -274,6 +340,14 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        url = urlparse(self.path)
+        if url.path.startswith("/api/trace/"):
+            return self._send(200, TRACE.get(unquote(url.path[len("/api/trace/"):])))
+        if url.path == "/api/traces/recent":
+            return self._send(200, TRACE.recent())
+        if url.path == "/api/traces":
+            ids = [i.strip() for i in (parse_qs(url.query).get("ids") or [""])[0].split(",") if i.strip()]
+            return self._send(200, TRACE.get_many(ids))
         if self.path.startswith("/api/stats"):
             self._send(200, stats())
         elif self.path.startswith("/api/config"):

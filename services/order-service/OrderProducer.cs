@@ -18,6 +18,7 @@ public sealed class OrderProducer : IDisposable
 
     private readonly KafkaOptions _kafka;
     private readonly LabLog _log;
+    private readonly TraceLog _trace;
     private readonly DeliveryVerifier _verifier;
     private readonly Lock _gate = new();
     private readonly long _startedAt = Environment.TickCount64;
@@ -41,10 +42,11 @@ public sealed class OrderProducer : IDisposable
     private long _seq, _queuedMsgs, _queueFull, _possiblyPersisted, _notPersisted, _producerGeneration;
     private volatile object? _clientView;
 
-    public OrderProducer(KafkaOptions kafka, LabLog log, DeliveryVerifier verifier)
+    public OrderProducer(KafkaOptions kafka, LabLog log, TraceLog trace, DeliveryVerifier verifier)
     {
         _kafka = kafka;
         _log = log;
+        _trace = trace;
         _verifier = verifier;
         _producer = Build(_settings);
     }
@@ -198,7 +200,7 @@ public sealed class OrderProducer : IDisposable
     public bool ProduceGenerated()
     {
         var s = _settings;
-        var order = NewOrder(PickCustomer(s), null);
+        var order = NewOrder(PickCustomer(s), null, null);
         return Produce(order, s);
     }
 
@@ -212,8 +214,9 @@ public sealed class OrderProducer : IDisposable
         {
             // Produce() не блокирует: сообщение кладётся в локальный буфер (RecordAccumulator),
             // фоновый поток librdkafka собирает batch-и и шлёт их лидерам партиций.
-            producer.Produce(_kafka.OrdersTopic, message, dr => OnDelivery(dr, order, started));
+            producer.Produce(_kafka.OrdersTopic, message, dr => OnDelivery(dr, order, started, s.Acks));
             Sent.Add();
+            TraceCreated(order, manual: false);
         }
         catch (ProduceException<string, string?> ex) when (ex.Error.Code == ErrorCode.Local_QueueFull)
         {
@@ -236,7 +239,7 @@ public sealed class OrderProducer : IDisposable
         return true;
     }
 
-    private void OnDelivery(DeliveryReport<string, string?> dr, Order order, long started)
+    private void OnDelivery(DeliveryReport<string, string?> dr, Order order, long started, string acks)
     {
         if (dr.Error.IsError)
         {
@@ -244,6 +247,7 @@ public sealed class OrderProducer : IDisposable
             if (dr.Status == PersistenceStatus.PossiblyPersisted) Interlocked.Increment(ref _possiblyPersisted);
             else Interlocked.Increment(ref _notPersisted);
             RecordError(dr.Error.Code, dr.Error.Reason, dr.Status);
+            TracePublishFailed(order, dr.Error.Code.ToString(), dr.Status);
             return;
         }
 
@@ -252,7 +256,8 @@ public sealed class OrderProducer : IDisposable
         _latency.Record(latency);
         var partition = dr.Partition.Value;
         if (partition is >= 0 and < 64) Interlocked.Increment(ref _partitionAcks[partition]);
-        _verifier.OnAcked(partition, dr.Offset.Value, order.OrderId);
+        _verifier.OnAcked(partition, dr.Offset.Value, order.OrderId, order.CorrelationId);
+        TracePublished(order, partition, dr.Offset.Value, latency, acks);
 
         _recent.Enqueue(new
         {
@@ -271,23 +276,25 @@ public sealed class OrderProducer : IDisposable
     {
         var s = _settings;
         var customer = string.IsNullOrWhiteSpace(req.CustomerId) ? PickCustomer(s) : req.CustomerId.Trim();
-        var order = NewOrder(customer, req.Amount);
+        var order = NewOrder(customer, req.Amount, TraceLog.Sanitize(req.CorrelationId));
         IProducer<string, string?> producer;
         lock (_gate) producer = _producer;
         var sw = Stopwatch.StartNew();
         try
         {
             Sent.Add();
+            TraceCreated(order, manual: true);
             var dr = await producer.ProduceAsync(_kafka.OrdersTopic, BuildMessage(order));
             Acked.Add();
-            _verifier.OnAcked(dr.Partition.Value, dr.Offset.Value, order.OrderId);
+            _verifier.OnAcked(dr.Partition.Value, dr.Offset.Value, order.OrderId, order.CorrelationId);
+            TracePublished(order, dr.Partition.Value, dr.Offset.Value, sw.Elapsed.TotalMilliseconds, s.Acks);
             if (s.PublishProfiles) PublishProfile(producer, order);
             _log.Add("info",
-                $"Ручной заказ {order.OrderId}: ключ «{customer}» → партиция {dr.Partition.Value}, offset {dr.Offset.Value}",
-                $"Manual order {order.OrderId}: key \"{customer}\" → partition {dr.Partition.Value}, offset {dr.Offset.Value}", "key-partition");
+                $"Ручной заказ {order.OrderId} ({order.CorrelationId}): ключ «{customer}» → партиция {dr.Partition.Value}, offset {dr.Offset.Value}",
+                $"Manual order {order.OrderId} ({order.CorrelationId}): key \"{customer}\" → partition {dr.Partition.Value}, offset {dr.Offset.Value}", "key-partition");
             return new
             {
-                ok = true, orderId = order.OrderId, key = customer, partition = dr.Partition.Value,
+                ok = true, orderId = order.OrderId, correlationId = order.CorrelationId, key = customer, partition = dr.Partition.Value,
                 offset = dr.Offset.Value, latencyMs = Math.Round(sw.Elapsed.TotalMilliseconds, 1),
                 status = dr.Status.ToString(), acks = s.Acks,
             };
@@ -296,7 +303,12 @@ public sealed class OrderProducer : IDisposable
         {
             Failed.Add();
             RecordError(ex.Error.Code, ex.Error.Reason, ex.DeliveryResult?.Status);
-            return new { ok = false, orderId = order.OrderId, key = customer, error = ex.Error.Code.ToString(), reason = ex.Error.Reason, status = ex.DeliveryResult?.Status.ToString() };
+            TracePublishFailed(order, ex.Error.Code.ToString(), ex.DeliveryResult?.Status);
+            return new
+            {
+                ok = false, orderId = order.OrderId, correlationId = order.CorrelationId, key = customer,
+                error = ex.Error.Code.ToString(), reason = ex.Error.Reason, status = ex.DeliveryResult?.Status.ToString(),
+            };
         }
     }
 
@@ -356,9 +368,30 @@ public sealed class OrderProducer : IDisposable
         static string Tier(decimal total) => total switch { > 50_000 => "platinum", > 10_000 => "gold", > 2_000 => "silver", _ => "bronze" };
     }
 
+    // ------------------------------------------------------------------ трассировка (бизнес-состояние заказа в order-service)
+
+    private void TraceCreated(Order order, bool manual)
+    {
+        _trace.Add(order.CorrelationId, "order-service", "created", "CREATED",
+            detail: $"{order.OrderId} · {order.CustomerId} · {order.Amount} {order.Currency}");
+        _trace.Recent(order.CorrelationId, order.OrderId, order.CustomerId, manual);
+    }
+
+    private void TracePublished(Order order, int partition, long offset, double latencyMs, string acks) =>
+        _trace.Add(order.CorrelationId, "order-service", "published", "PUBLISHED", _kafka.OrdersTopic, partition, offset >= 0 ? offset : null,
+            $"ack {latencyMs:F1} ms · acks={acks}" + (offset < 0 ? " · offset unknown (acks=0)" : ""));
+
+    private void TracePublishFailed(Order order, string code, PersistenceStatus? status)
+    {
+        _trace.Add(order.CorrelationId, "order-service", "publish-failed", "PUBLISH_FAILED", _kafka.OrdersTopic,
+            detail: code + (status is null ? "" : $" · {status}"));
+        _trace.Anomaly(order.CorrelationId, status == PersistenceStatus.PossiblyPersisted ? "possibly-persisted" : "publish-failed",
+            "order-service", code);
+    }
+
     // ------------------------------------------------------------------ helpers
 
-    private Order NewOrder(string customerId, decimal? amount)
+    private Order NewOrder(string customerId, decimal? amount, string? correlationId)
     {
         var seq = Interlocked.Increment(ref _seq);
         var rnd = Random.Shared;
@@ -369,7 +402,8 @@ public sealed class OrderProducer : IDisposable
             Currency: Currencies[rnd.Next(Currencies.Length)],
             Items: rnd.Next(1, 6),
             CreatedAt: DateTimeOffset.UtcNow,
-            Source: "order-service");
+            Source: "order-service",
+            CorrelationId: correlationId ?? TraceLog.NewId());
     }
 
     private static string PickCustomer(ProducerSettings s)
@@ -389,6 +423,8 @@ public sealed class OrderProducer : IDisposable
         {
             { "source", "order-service"u8.ToArray() },
             { "order-id", Encoding.UTF8.GetBytes(order.OrderId) },
+            // Correlation id едет в заголовке через все сервисы: по нему собирается путь одного события.
+            { TraceLog.Header, Encoding.UTF8.GetBytes(order.CorrelationId) },
             { "content-type", "application/json"u8.ToArray() },
         },
     };

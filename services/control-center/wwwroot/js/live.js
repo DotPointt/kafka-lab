@@ -122,7 +122,8 @@ function orderServiceCard() {
     if (r?.ok) {
       result.innerHTML = T(
         `✓ ${esc(r.orderId)}: key "${esc(r.key)}" → <b>partition ${r.partition}</b>, offset ${r.offset}, ${fmtMs(r.latencyMs)} (acks=${r.acks})`,
-        `✓ ${esc(r.orderId)}: ключ «${esc(r.key)}» → <b>партиция ${r.partition}</b>, offset ${r.offset}, ${fmtMs(r.latencyMs)} (acks=${r.acks})`);
+        `✓ ${esc(r.orderId)}: ключ «${esc(r.key)}» → <b>партиция ${r.partition}</b>, offset ${r.offset}, ${fmtMs(r.latencyMs)} (acks=${r.acks})`) +
+        (r.correlationId ? ` · <a href="#" class="cid-link" data-cid="${esc(r.correlationId)}" data-tip="${T('Follow this order through every service', 'Проследить заказ через все сервисы')}">🔎 ${esc(r.correlationId)}</a>` : '');
     } else if (r && r.error !== 'demo') {
       result.innerHTML = `<span style="color:var(--err)">✗ ${esc(r.error)}: ${esc(r.reason ?? '')} ${r.status ? '(' + esc(r.status) + ')' : ''}</span>`;
     }

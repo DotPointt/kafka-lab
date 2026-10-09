@@ -1,5 +1,5 @@
 // Bottom panels of the live map: partitions and offsets table, messages, event log, header summary.
-import { h, $, $$, esc, fmtNum, fmtRate, fmtTime, topicColor, syncList, toast, setText } from './util.js';
+import { h, $, $$, esc, fmtNum, fmtRate, fmtTime, topicColor, syncList, toast, setText, linkCids } from './util.js';
 import { store } from './store.js';
 import { actions, demoGuard } from './api.js';
 import { LEARN } from './learn.js';
@@ -149,7 +149,9 @@ export function initMessages() {
       r.messages.map(m => `<tr><td class="num">${m.partition}</td><td class="num">${m.offset}</td><td class="mono small">${fmtTime(m.timestamp)}</td>` +
         `<td class="mono">${m.key === null ? '<span class="muted">null</span>' : esc(m.key)}</td>` +
         `<td class="val">${m.value === null ? '<span class="muted">null (tombstone)</span>' : esc(m.value)}</td>` +
-        `<td class="hdrs">${Object.entries(m.headers).map(([k, v]) => `${esc(k)}=${esc(v)}`).join('<br>')}</td></tr>`).join('') + '</tbody>';
+        `<td class="hdrs">${Object.entries(m.headers).map(([k, v]) => k === 'correlation-id'
+          ? `${esc(k)}=<a href="#" class="cid-link" data-cid="${esc(v)}" title="${T('Trace this event', 'Проследить это событие')}">${esc(v)}</a>`
+          : `${esc(k)}=${esc(v)}`).join('<br>')}</td></tr>`).join('') + '</tbody>';
     if (!r.messages.length) table.innerHTML += `<tr><td colspan="6" class="muted">${T('empty', 'пусто')}</td></tr>`;
   }
   setInterval(() => {
@@ -223,7 +225,7 @@ function eventEl(e, fresh) {
     h('span', { class: 't' }, fmtTime(e.ts)),
     h('div', {},
       e.source ? h('span', { class: 'src' }, e.source) : h('span', { class: 'src' }, e.category),
-      evText(e),
+      linkCids(evText(e)),
       learn ? h('button', { class: 'why' }, T('why?', 'почему?')) : null));
   if (learn) {
     el.querySelector('.why').onclick = () => {

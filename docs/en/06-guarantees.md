@@ -92,10 +92,26 @@ Kafka can't atomically commit an offset together with a write to PostgreSQL. Wor
 - Consumer-side retries (sending to a retry topic) **break per-key ordering** — a deliberate trade-off.
 - If per-entity ordering matters and a message can't be processed, it is sometimes better to stop the partition (and alert) than to skip it.
 
+## Tracing one event: correlation ID
+
+Counters ("lag 1,000", "duplicates: 7") tell you *that* something went wrong, but not *which* business operation. For that every message of one business transaction carries the same **correlation id** — in a header, so it doesn't depend on the payload format:
+
+```text
+order-service ── orders (correlation-id: c-1a2b3c4d) ──► order-processor ── payments (same header) ──► analytics
+                                                            └──► orders.dlq (headers are copied)
+```
+
+- The producer generates the id (or takes it from the incoming request) and puts it into a header; every consumer **copies it into everything it produces** — payments, retries, the DLQ.
+- Every service records its steps under this id: "received", "PAID", "COUNTED". Put together, they show the business state of one operation in every service.
+- The exactly-once check: every service must change the state **exactly once**. Twice = a duplicate (a double charge, a doubled report); never = the event is stuck or lost.
+- A correlation id is not the message key: the key chooses the partition (and ordering), the correlation id links the steps of one transaction across topics. It is not the order id either — one business process may touch many entities.
+- In production this is OpenTelemetry with the W3C `traceparent` header: the Kafka instrumentations for .NET, Java, Python and Go propagate it automatically, and a tracing backend (Jaeger, Tempo, Zipkin) draws the whole path.
+
 ## In the lab
 
 - "🔍 Delivery audit" in the order-service card checks every broker acknowledgement against what is actually in the log: you can see **losses** (the "Zombie leader" scenario) and **duplicates in the log** (the "Network latency and duplicates" scenario).
 - The "duplicates" counter in the order-processing group is reprocessing after a consumer crash (at-least-once).
+- The **🔎 Trace an event** tab under the live map follows one order by its correlation id: how many times each service changed its business state, and where the event was duplicated, lost or dead-lettered (the "Trace one event" scenario).
 
 ## Self-check
 

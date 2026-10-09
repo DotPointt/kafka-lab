@@ -11,6 +11,9 @@ export const REPO_URL = window.KAFKA_LAB?.repo ?? '';
 let demoMessages = null; // записанные сообщения топиков — для вкладки «Сообщения» в демо-режиме
 export function setDemoMessages(messages) { demoMessages = messages; }
 
+let demoTraces = { traces: {}, recent: null }; // записанные трассы событий — для вкладки «Трассировка» в демо-режиме
+export function setDemoTraces(traces, recent) { demoTraces = { traces: traces ?? {}, recent }; }
+
 export function demoNotice() {
   const repoText = T('the repository', 'репозитории');
   toast([
@@ -51,6 +54,12 @@ export async function api(method, url, body, { quiet = false } = {}) {
 }
 
 function demoApi(method, url, quiet) {
+  const trace = url.match(/^api\/trace\/([^?]+)/);
+  if (method === 'GET' && trace) {
+    const cid = decodeURIComponent(trace[1]);
+    return demoTraces.traces[cid] ?? { cid, found: false, verdict: 'unknown', businessState: 'UNKNOWN', stages: [], steps: [], unreachable: [] };
+  }
+  if (method === 'GET' && url === 'api/traces/recent') return demoTraces.recent ?? { recent: [], problems: [], unreachable: [] };
   const peek = url.match(/^api\/topics\/([^/?]+)\/messages\?limit=(\d+)(?:&partition=(\d+))?/);
   if (method === 'GET' && peek) {
     const topic = decodeURIComponent(peek[1]);

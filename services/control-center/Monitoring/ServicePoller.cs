@@ -38,7 +38,7 @@ public sealed class ServicePoller(IHttpClientFactory httpFactory, LabOptions opt
         return (await Task.WhenAll(tasks)).ToList();
     }
 
-    private static List<(string Container, string State, string Host)> Targets(ServiceDef def, IReadOnlyList<ContainerInfo>? containers)
+    internal static List<(string Container, string State, string Host)> Targets(ServiceDef def, IReadOnlyList<ContainerInfo>? containers)
     {
         if (containers is null) return [(def.Name, "running", def.Name)]; // Docker недоступен — идём по DNS-имени
         return containers.Where(c => c.Service == def.Name)

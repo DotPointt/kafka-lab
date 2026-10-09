@@ -76,6 +76,18 @@ def a_start():
          "Наведи мышь на чипы партиций: лидер (залитый), реплики в ISR, конец лога.")
 
 
+def a_trace():
+    r = call("POST", "/api/svc/order-service/orders", {"customerId": "customer-042"})
+    state["traced"] = r.get("correlationId")
+    note("🔎 One order, traced", "🔎 Один заказ под наблюдением",
+         f"Order {r.get('orderId')} got the correlation id <b>{r.get('correlationId')}</b> — it travels in a Kafka header through every service. "
+         "Open the \"🔎 Trace an event\" tab under the map: each service changed the order's business state exactly once "
+         "(CREATED → PUBLISHED → PAID → REPORTED). The traces in the demo are a snapshot taken at the end of the recording.",
+         f"Заказ {r.get('orderId')} получил correlation id <b>{r.get('correlationId')}</b> — он едет в Kafka-заголовке через все сервисы. "
+         "Открой вкладку «🔎 Трассировка события» под схемой: каждый сервис сменил бизнес-состояние заказа ровно один раз "
+         "(CREATED → PUBLISHED → PAID → REPORTED). Трассы в демо — снимок на конец записи.")
+
+
 def a_keys():
     results = [call("POST", "/api/svc/order-service/orders", {"customerId": "customer-007"}) for _ in range(3)]
     parts = ",".join(map(str, {r.get("partition") for r in results}))
@@ -137,10 +149,10 @@ def a_crash_consumer():
     note(f"💥 Consumer {client} crashed", f"💥 Крэш консюмера {client}",
          "The consumer died without a commit and without LeaveGroup. For about 10 s it stays in the group as a \"ghost\" (session.timeout.ms), "
          "and nobody reads its partitions. Then a rebalance, and the new owner re-reads the messages after the last commit — "
-         "the \"duplicates\" counter grows: this is what at-least-once looks like.",
+         "the \"duplicates\" counter grows: this is what at-least-once looks like. In \"🔎 Trace an event\" → Problems such orders show Processing ×2 and Payment ×2 — a double charge.",
          "Консюмер умер без коммита и без LeaveGroup. Около 10 с он остаётся в группе «призраком» (session.timeout.ms), "
          "его партиции никто не читает. Потом ребаланс, а новый владелец перечитывает сообщения после последнего коммита — "
-         "растёт счётчик «дубли»: так выглядит at-least-once.")
+         "растёт счётчик «дубли»: так выглядит at-least-once. В «🔎 Трассировка события» → «Проблемы» у таких заказов Обработка ×2 и Платёж ×2 — двойное списание.")
 
 
 def a_pause():
@@ -179,7 +191,7 @@ def a_heal():
 
 
 TIMELINE = [
-    (1, a_start), (12, a_keys), (25, a_kill), (60, a_add_consumer), (82, a_start_broker),
+    (1, a_start), (6, a_trace), (12, a_keys), (25, a_kill), (60, a_add_consumer), (82, a_start_broker),
     (112, a_preferred), (127, a_crash_consumer), (162, a_pause), (187, a_resume),
     (202, a_latency), (227, a_heal),
 ]
@@ -246,6 +258,13 @@ def main():
     for t in [t["name"] for t in latest["snap"]["topics"] if not t["internal"]]:
         messages[t] = call("GET", f"/api/topics/{t}/messages?limit=30")
 
+    print("Reading traces …")
+    traces_recent = call("GET", "/api/traces/recent")
+    ids = [x["cid"] for x in traces_recent.get("recent", [])] + [x["cid"] for x in traces_recent.get("problems", [])]
+    if state.get("traced"):
+        ids.insert(0, state["traced"])
+    traces = {cid: call("GET", f"/api/trace/{cid}") for cid in dict.fromkeys(ids)}
+
     recording = {
         "meta": {
             "recordedAt": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -256,6 +275,8 @@ def main():
         "annotations": annotations,
         "frames": frames,
         "messages": messages,
+        "traces": traces,
+        "tracesRecent": traces_recent,
     }
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(OUT, "w", encoding="utf-8") as f:

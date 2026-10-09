@@ -3,7 +3,7 @@
 // real cluster snapshots once a second + the real event log, not a simulation.
 import { h, $, esc } from './util.js';
 import { store } from './store.js';
-import { setDemoMessages, REPO_URL } from './api.js';
+import { setDemoMessages, setDemoTraces, REPO_URL } from './api.js';
 import { T, pick } from './i18n.js';
 
 let rec = null;
@@ -49,6 +49,7 @@ export async function startDemo() {
     return;
   }
   setDemoMessages(rec.messages ?? {});
+  setDemoTraces(rec.traces, rec.tracesRecent);
   buildBar(bar);
   seek(0);
 }

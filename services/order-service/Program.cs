@@ -10,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 var kafka = builder.Configuration.GetSection("Kafka").Get<KafkaOptions>() ?? new KafkaOptions();
 builder.Services.AddSingleton(kafka);
 builder.Services.AddSingleton<LabLog>();
+builder.Services.AddSingleton(new TraceLog("order-service"));
 builder.Services.AddSingleton<DeliveryVerifier>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<DeliveryVerifier>());
 builder.Services.AddSingleton<OrderProducer>();
@@ -24,6 +25,11 @@ app.MapPut("/api/config", (OrderProducer p, SettingsPatch patch) => p.ApplySetti
 app.MapPost("/api/orders", (OrderProducer p, ManualOrderRequest req) => p.SendManualAsync(req));
 app.MapPost("/api/burst", (OrderProducer p, BurstRequest req) => p.Burst(req.Count));
 app.MapDelete("/api/profiles/{customerId}", (OrderProducer p, string customerId) => p.DeleteProfileAsync(customerId));
+
+// Трассировка по correlation id: какие шаги этот сервис выполнил по бизнес-транзакции.
+app.MapGet("/api/trace/{cid}", (TraceLog t, string cid) => t.Get(cid));
+app.MapGet("/api/traces", (TraceLog t, string? ids) => t.GetMany(ids));
+app.MapGet("/api/traces/recent", (TraceLog t) => t.RecentView());
 
 app.Lifetime.ApplicationStarted.Register(() =>
     app.Services.GetRequiredService<LabLog>().Add("info", $"order-service запущен, bootstrap: {kafka.BootstrapServers}",

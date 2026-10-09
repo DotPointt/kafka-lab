@@ -44,7 +44,8 @@ public sealed record SettingsPatch(
     string? AssignmentStrategy, int? SessionTimeoutMs, int? MaxPollIntervalMs,
     int? AutoCommitIntervalMs, bool? StaticMembership);
 
-public sealed record OrderMessage(string OrderId, string CustomerId, decimal Amount, string Currency, int Items, DateTimeOffset CreatedAt);
+public sealed record OrderMessage(string OrderId, string CustomerId, decimal Amount, string Currency, int Items, DateTimeOffset CreatedAt,
+    string? CorrelationId = null);
 
 public sealed record PaymentMessage(string PaymentId, string OrderId, string CustomerId, decimal Amount, string Currency,
-    string Status, string ProcessedBy, DateTimeOffset ProcessedAt);
+    string Status, string ProcessedBy, DateTimeOffset ProcessedAt, string? CorrelationId);

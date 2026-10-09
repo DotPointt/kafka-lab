@@ -240,6 +240,9 @@ public sealed class ConsumerWorker
     {
         var s = _ctx.Settings;
         lock (_lock) _positions[cr.Partition.Value] = cr.Offset.Value;
+        var topic = _ctx.Kafka.OrdersTopic;
+        var (p, o) = (cr.Partition.Value, cr.Offset.Value);
+        var cid = Header(cr.Message, TraceLog.Header);
 
         OrderMessage? order;
         try
@@ -252,18 +255,27 @@ public sealed class ConsumerWorker
             // Poison pill: сообщение невозможно разобрать — ретраи бессмысленны, сразу в DLQ.
             Interlocked.Increment(ref _dlq);
             _ctx.SendToDlq(cr, $"poison pill: {ex.Message}", ClientId, 1);
+            _ctx.Trace.Add(cid, ClientId, "dead-lettered", "DEAD_LETTERED", _ctx.Kafka.DlqTopic, detail: "poison pill");
+            _ctx.Trace.Anomaly(cid, "dlq", ClientId, "poison pill");
             _ctx.Log.Add("warn",
-                $"{ClientId}: poison pill в orders-{cr.Partition.Value}@{cr.Offset.Value} ({ex.Message}) → orders.dlq",
-                $"{ClientId}: poison pill at orders-{cr.Partition.Value}@{cr.Offset.Value} ({ex.Message}) → orders.dlq", "dlq", "poison-" + Id, 2000);
+                $"{ClientId}: poison pill в orders-{p}@{o} ({ex.Message}) → orders.dlq",
+                $"{ClientId}: poison pill at orders-{p}@{o} ({ex.Message}) → orders.dlq", "dlq", "poison-" + Id, 2000);
             return;
         }
+        cid ??= order.CorrelationId;
+
+        // Бизнес-состояние в этом сервисе: заказ получен на обработку. Повторное получение того же события = дубль.
+        var delivery = _ctx.Trace.Count(cid, "received") + 1;
+        _ctx.Trace.Add(cid, ClientId, "received", "RECEIVED", topic, p, o, $"{order.OrderId} · delivery #{delivery}");
+        if (delivery > 1)
+            _ctx.Trace.Anomaly(cid, "duplicate-processing", ClientId, $"{order.OrderId}: delivery #{delivery} (orders-{p}@{o})");
 
         if (!_ctx.Registry.TryMark(order.OrderId))
         {
             Interlocked.Increment(ref _duplicates);
             _ctx.Log.Add("warn",
-                $"{ClientId}: заказ {order.OrderId} уже обрабатывали — повторная доставка (at-least-once). Нужна идемпотентная обработка!",
-                $"{ClientId}: order {order.OrderId} was already processed — redelivery (at-least-once). Processing must be idempotent!",
+                $"{ClientId}: заказ {order.OrderId} ({cid}) уже обрабатывали — повторная доставка (at-least-once). Нужна идемпотентная обработка!",
+                $"{ClientId}: order {order.OrderId} ({cid}) was already processed — redelivery (at-least-once). Processing must be idempotent!",
                 "at-least-once", "dup-" + Id, 3000);
         }
 
@@ -281,19 +293,25 @@ public sealed class ConsumerWorker
                 Interlocked.Increment(ref _failed);
                 Interlocked.Increment(ref _dlq);
                 _ctx.SendToDlq(cr, "processing failed after retries (simulated)", ClientId, attempt);
+                _ctx.Trace.Add(cid, ClientId, "dead-lettered", "DEAD_LETTERED", _ctx.Kafka.DlqTopic, detail: $"after {attempt} attempts");
+                _ctx.Trace.Anomaly(cid, "dlq", ClientId, $"{order.OrderId}: {attempt} attempts");
                 _ctx.Log.Add("warn",
-                    $"{ClientId}: {order.OrderId} не обработан за {attempt} попыток → orders.dlq",
-                    $"{ClientId}: {order.OrderId} failed after {attempt} attempts → orders.dlq", "dlq", "dlq-" + Id, 3000);
+                    $"{ClientId}: {order.OrderId} ({cid}) не обработан за {attempt} попыток → orders.dlq",
+                    $"{ClientId}: {order.OrderId} ({cid}) failed after {attempt} attempts → orders.dlq", "dlq", "dlq-" + Id, 3000);
                 Processed.Add();
                 return;
             }
+            _ctx.Trace.Add(cid, ClientId, "retry", "RETRYING", detail: $"attempt {attempt} failed (simulated)");
         }
 
         var payment = new PaymentMessage($"pay-{order.OrderId}", order.OrderId, order.CustomerId, order.Amount, order.Currency,
-            "captured", ClientId, DateTimeOffset.UtcNow);
-        _ctx.PublishPayment(payment, JsonSerializer.Serialize(payment, Json));
+            "captured", ClientId, DateTimeOffset.UtcNow, cid);
+        _ctx.PublishPayment(payment, JsonSerializer.Serialize(payment, Json), ClientId);
         Processed.Add();
     }
+
+    private static string? Header(Message<string, string> m, string name) =>
+        m.Headers is not null && m.Headers.TryGetLastBytes(name, out var bytes) ? System.Text.Encoding.UTF8.GetString(bytes) : null;
 
     private string AssignedText()
     {

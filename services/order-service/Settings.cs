@@ -49,13 +49,15 @@ public sealed record SettingsPatch(
     string? Acks, bool? EnableIdempotence, int? LingerMs, string? Compression,
     int? RequestTimeoutMs, int? DeliveryTimeoutMs, int? MaxInFlight);
 
-public sealed record ManualOrderRequest(string? CustomerId, decimal? Amount);
+/// <param name="CorrelationId">Свой correlation id (необязательно) — иначе сервис сгенерирует «c-xxxxxxxx».</param>
+public sealed record ManualOrderRequest(string? CustomerId, decimal? Amount, string? CorrelationId = null);
 
 public sealed record BurstRequest(int Count);
 
+/// <param name="CorrelationId">Сквозной id бизнес-транзакции: едет в заголовке «correlation-id» через все сервисы.</param>
 public sealed record Order(
     string OrderId, string CustomerId, decimal Amount, string Currency,
-    int Items, DateTimeOffset CreatedAt, string Source);
+    int Items, DateTimeOffset CreatedAt, string Source, string CorrelationId);
 
 public sealed record CustomerProfile(
     string CustomerId, int OrdersCount, decimal TotalSpent, string Tier, DateTimeOffset UpdatedAt);

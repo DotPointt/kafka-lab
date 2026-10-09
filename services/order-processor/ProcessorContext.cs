@@ -9,6 +9,7 @@ public sealed class ProcessorContext : IDisposable
 {
     public KafkaOptions Kafka { get; }
     public LabLog Log { get; }
+    public TraceLog Trace { get; } = new("order-processor");
     public ProcessedRegistry Registry { get; } = new();
     public volatile ProcessorSettings Settings = new();
 
@@ -37,25 +38,36 @@ public sealed class ProcessorContext : IDisposable
         .Build();
     }
 
-    public void PublishPayment(PaymentMessage payment, string json)
+    public void PublishPayment(PaymentMessage payment, string json, string instance)
     {
+        var cid = payment.CorrelationId;
+        var headers = new Headers { { "order-id", Encoding.UTF8.GetBytes(payment.OrderId) } };
+        if (cid is not null) headers.Add(TraceLog.Header, Encoding.UTF8.GetBytes(cid)); // correlation id едет дальше по цепочке
         try
         {
-            _producer.Produce(Kafka.PaymentsTopic, new Message<string, string> { Key = payment.CustomerId, Value = json },
+            _producer.Produce(Kafka.PaymentsTopic, new Message<string, string> { Key = payment.CustomerId, Value = json, Headers = headers },
                 dr =>
                 {
                     if (dr.Error.IsError)
                     {
                         PaymentsFailed.Add();
+                        Trace.Add(cid, instance, "payment-failed", "PAYMENT_FAILED", Kafka.PaymentsTopic, detail: dr.Error.Code.ToString());
+                        Trace.Anomaly(cid, "payment-failed", instance, dr.Error.Code.ToString());
                         Log.Add("error", $"Не удалось записать платёж в payments: {dr.Error.Reason}",
                             $"Failed to write the payment to payments: {dr.Error.Reason}", "delivery-timeout", "payment-fail");
+                        return;
                     }
-                    else PaymentsSent.Add();
+                    PaymentsSent.Add();
+                    // Бизнес-состояние «оплачен» — после того как платёж надёжно записан в Kafka.
+                    var times = Trace.Add(cid, instance, "paid", "PAID", Kafka.PaymentsTopic, dr.Partition.Value, dr.Offset.Value, payment.PaymentId);
+                    if (times > 1)
+                        Trace.Anomaly(cid, "duplicate-payment", instance, $"{payment.OrderId}: payment #{times}");
                 });
         }
         catch (KafkaException ex)
         {
             PaymentsFailed.Add();
+            Trace.Add(cid, instance, "payment-failed", "PAYMENT_FAILED", Kafka.PaymentsTopic, detail: ex.Error.Code.ToString());
             Log.Add("error", $"payments: {ex.Error.Reason}", $"payments: {ex.Error.Reason}", null, "payment-fail");
         }
     }
@@ -63,7 +75,11 @@ public sealed class ProcessorContext : IDisposable
     /// <summary>Dead Letter Queue: исходное сообщение + заголовки с причиной и координатами оригинала.</summary>
     public void SendToDlq(ConsumeResult<string, string> cr, string reason, string failedBy, int attempts)
     {
-        var headers = new Headers
+        var headers = new Headers();
+        // Исходные заголовки (в том числе correlation-id) сохраняем — по ним сообщение из DLQ связывается с транзакцией.
+        if (cr.Message.Headers is not null)
+            foreach (var h in cr.Message.Headers) headers.Add(h.Key, h.GetValueBytes());
+        var extra = new Headers
         {
             { "dlq-reason", Encoding.UTF8.GetBytes(reason) },
             { "dlq-original-topic", Encoding.UTF8.GetBytes(cr.Topic) },
@@ -72,6 +88,7 @@ public sealed class ProcessorContext : IDisposable
             { "dlq-failed-by", Encoding.UTF8.GetBytes(failedBy) },
             { "dlq-attempts", Encoding.UTF8.GetBytes(attempts.ToString()) },
         };
+        foreach (var h in extra) headers.Add(h.Key, h.GetValueBytes());
         try
         {
             _producer.Produce(Kafka.DlqTopic, new Message<string, string> { Key = cr.Message.Key, Value = cr.Message.Value, Headers = headers },

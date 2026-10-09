@@ -11,6 +11,7 @@ import { initScenarios, openScenarios, resetLab } from './scenarios.js';
 import { initDocs, showDocs } from './docs.js';
 import { initCards, showCards } from './flashcards.js';
 import { initIntro } from './intro.js';
+import { initTrace } from './trace.js';
 
 function initTabs() {
   const open = name => {
@@ -49,6 +50,7 @@ initPartitions();
 initMessages();
 initEvents();
 initSubtabs();
+initTrace();
 initScenarios(openTab);
 initDocs();
 initCards();

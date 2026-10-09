@@ -23,7 +23,8 @@ In the UI:
 - **Live map** — producers → brokers with partitions (leaders, ISR, offline) → consumer groups with members and lag; animated message and replication flows.
 - **Failures** — on every broker: Stop (graceful), Kill (SIGKILL), Pause, Network (latency, loss, full isolation, split brain). Services: stop/kill/pause; consumers: crash, hang, restart.
 - **Load** — sliders for rate, acks, idempotence, linger, compression, hot key, processing time, error rate, rebalance strategy, KIP-848, static membership.
-- **🎓 Scenarios** — 15 step-by-step labs: keys and partitions, rebalancing, lag, broker failure, min.insync.replicas, data loss with acks=1 (the "zombie leader"), duplicates from retries, KRaft, DLQ, compaction…
+- **🎓 Scenarios** — 16 step-by-step labs: keys and partitions, rebalancing, lag, broker failure, min.insync.replicas, data loss with acks=1 (the "zombie leader"), duplicates from retries, KRaft, DLQ, compaction…
+- **🔎 Trace an event** — follow one order by its **correlation ID** through every service: how many times each service changed the business state (CREATED → PUBLISHED → PAID → REPORTED), and where it was duplicated (a double charge after a consumer crash), lost (acks=1 + split brain) or dead-lettered.
 - **Event log** — "Leader election: orders-3 (1→2)", "ISR shrank", "Group: Stable → PreparingRebalance"… every event has a "why?" button.
 - **Partitions & offsets, Charts, Messages** — a per-partition lag table, 5-minute charts, reading the latest messages and sending your own (poison pill, tombstone).
 - **Cheat sheets** — 10 study notes (basics, producer, consumer, replication and KRaft, storage, guarantees, operations and CLI, a one-page cheat sheet, Kafka vs RabbitMQ, how the lab works).

@@ -64,6 +64,8 @@ Once a second:
 6. Every 4 s — `kafka-metadata-quorum.sh describe --replication` inside a broker (who the active controller is).
 7. `EventDetector` compares the snapshot with the previous one and writes events to the log; the browser gets everything via SSE (`/api/stream`).
 
+On request (the **🔎 Trace an event** tab) — `GET /api/trace/{correlationId}` of every order-service, order-processor and analytics instance. Each service keeps in memory (`TraceLog`) what it did with every business transaction; `TraceService.cs` stitches the steps together and decides, stage by stage, whether the business state changed exactly once, twice (a duplicate) or never (stuck or lost).
+
 ## Running the C# services from an IDE
 
 The brokers are published to the host as `localhost:19092,19093,19094` (the `EXTERNAL` listener), so you can stop a container and run the service from Visual Studio / Rider:

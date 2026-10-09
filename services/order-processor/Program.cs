@@ -26,4 +26,9 @@ app.MapPost("/api/instances/{id:int}/crash", (ConsumerManager m, int id) => m.Cr
 app.MapPost("/api/instances/{id:int}/restart", (ConsumerManager m, int id) => m.Restart(id));
 app.MapPost("/api/instances/{id:int}/stuck", (ConsumerManager m, int id, bool? stuck) => m.Stuck(id, stuck));
 
+// Трассировка по correlation id: что этот сервис сделал с бизнес-транзакцией (и сколько раз).
+app.MapGet("/api/trace/{cid}", (ProcessorContext c, string cid) => c.Trace.Get(cid));
+app.MapGet("/api/traces", (ProcessorContext c, string? ids) => c.Trace.GetMany(ids));
+app.MapGet("/api/traces/recent", (ProcessorContext c) => c.Trace.RecentView());
+
 app.Run();

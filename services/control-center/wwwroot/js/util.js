@@ -22,6 +22,21 @@ export function h(tag, attrs, ...children) {
   return el;
 }
 
+const CID_RE = /\bc-[0-9a-f]{8}\b/g;
+
+/** Text with correlation ids (c-xxxxxxxx) turned into links; a click opens the trace (see trace.js). */
+export function linkCids(text) {
+  const s = String(text ?? '');
+  const out = [];
+  let last = 0;
+  for (const m of s.matchAll(CID_RE)) {
+    out.push(s.slice(last, m.index), h('a', { class: 'cid-link', href: '#', 'data-cid': m[0] }, m[0]));
+    last = m.index + m[0].length;
+  }
+  out.push(s.slice(last));
+  return out;
+}
+
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
