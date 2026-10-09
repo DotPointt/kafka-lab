@@ -11,7 +11,7 @@ import { initScenarios, openScenarios, resetLab } from './scenarios.js';
 import { initDocs, showDocs } from './docs.js';
 import { initCards, showCards } from './flashcards.js';
 import { initIntro } from './intro.js';
-import { initTrace } from './trace.js';
+import { initTrace, showTracePanel } from './trace.js';
 
 function initTabs() {
   const open = name => {
@@ -60,5 +60,6 @@ store.onSnapshot(renderHealth);
 $('#btn-heal').addEventListener('click', heal);
 $('#btn-scenarios').addEventListener('click', () => { openTab('live'); openScenarios(); });
 $('#btn-reset').addEventListener('click', resetLab);
+$('#btn-trace').addEventListener('click', showTracePanel);
 
 connectStream();

@@ -140,25 +140,37 @@ async function tick() {
   if (tickN % 2 === 0 || !lists) await loadLists();
 }
 
-export function openTrace(cid) {
+/** Show the trace panel (live map → bottom panel → "Trace an event"); without an id just focus the search field. */
+export function showTracePanel() {
   if ($('#tab-live') && !$('#tab-live').classList.contains('active')) document.querySelector('.tab-btn[data-tab="live"]')?.click();
   showSubtab('trace');
-  current = cid;
-  ui.input.value = cid;
-  loadTrace(cid);
+  if (!current) ui.input.focus({ preventScroll: true }); // focus first: it would cancel a smooth scroll
+  $('#sub-trace').closest('.panel')?.scrollIntoView({ block: 'start', behavior: 'smooth' });
   loadLists();
-  $('#sub-trace').closest('.panel')?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
-async function sendTraced(btn) {
+export function openTrace(cid) {
+  current = cid;
+  ui.input.value = cid;
+  showTracePanel();
+  loadTrace(cid);
+}
+
+/** Send one order through order-service and open its trace right away. */
+export async function sendAndTrace(customerId, btn) {
   if (demoGuard()) return;
-  btn.disabled = true;
-  const r = await svc.post('order-service', 'orders', {});
-  btn.disabled = false;
+  if (btn) btn.disabled = true;
+  const r = await svc.post('order-service', 'orders', customerId ? { customerId } : {});
+  if (btn) btn.disabled = false;
   if (r?.correlationId) {
     toast(T(`Order ${r.orderId} sent with correlation id ${r.correlationId}`, `Заказ ${r.orderId} отправлен с correlation id ${r.correlationId}`), 'ok', 4000);
     openTrace(r.correlationId);
   }
+  return r;
+}
+
+function sendTraced(btn) {
+  return sendAndTrace(null, btn);
 }
 
 async function loadTrace(cid) {

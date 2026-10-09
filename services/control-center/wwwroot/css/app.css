@@ -450,6 +450,9 @@ table.grid tr:hover td { background: rgba(122,162,247,.04); }
 .cards-list .a { margin-top: 6px; color: var(--text-2); }
 
 /* ---------- trace (correlation id) ---------- */
+.btn-trace { border-color: rgba(122,162,247,.7); }
+.bottom .panel { scroll-margin-top: 64px; } /* under the sticky header */
+.btn-trace:hover { background: rgba(122,162,247,.15); }
 .cid-link { font-family: var(--mono); color: var(--accent-2); text-decoration: none; border-bottom: 1px dotted var(--accent); cursor: pointer; }
 .cid-link:hover { color: #fff; border-bottom-style: solid; }
 .trace-input { width: 170px; }

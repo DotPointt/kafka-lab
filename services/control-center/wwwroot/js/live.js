@@ -6,6 +6,7 @@ import {
 import { store } from './store.js';
 import { svc, actions, demoGuard } from './api.js';
 import { T, isRu } from './i18n.js';
+import { sendAndTrace } from './trace.js';
 
 const TOPIC_ORDER = ['orders', 'payments', 'orders.dlq', 'customer-profiles', 'clickstream'];
 const GROUP_SERVICE = { 'order-processing': 'order-processor', 'analytics': 'analytics' };
@@ -128,6 +129,12 @@ function orderServiceCard() {
       result.innerHTML = `<span style="color:var(--err)">✗ ${esc(r.error)}: ${esc(r.reason ?? '')} ${r.status ? '(' + esc(r.status) + ')' : ''}</span>`;
     }
   };
+  const traceBtn = h('button', {
+    class: 'btn btn-sm btn-trace',
+    'data-tip': T('Send one order with this key and follow it through every service (correlation ID)',
+      'Отправить один заказ с этим ключом и проследить его через все сервисы (correlation ID)'),
+  }, T('🔎 Send & trace', '🔎 Отправить и проследить'));
+  traceBtn.onclick = () => sendAndTrace(keyInput.value.trim() || null, traceBtn);
   const burstBtn = h('button', { class: 'btn btn-sm', 'data-tip': T('Send 10,000 orders as fast as possible — watch batching and lag growth', 'Отправить 10 000 заказов максимально быстро — увидеть batching и рост lag') }, 'Burst 10k');
   burstBtn.onclick = () => svc.post(name, 'burst', { count: 10000 });
 
@@ -154,7 +161,7 @@ function orderServiceCard() {
         h('label', { 'data-tip': T('Total time to deliver a message, retries included', 'Общее время на доставку сообщения, включая ретраи') }, 'delivery.timeout'), delTimeout,
         h('label', { 'data-tip': T('Share of orders from customer-007: one key → one "hot" partition', 'Доля заказов от customer-007: один ключ → одна «горячая» партиция') }, T('hot key', 'горячий ключ')), hot,
         h('label', { 'data-tip': 'max.in.flight.requests.per.connection' }, 'max.in.flight'), inflight)),
-    h('div', { class: 'send-row' }, keyInput, predicted, sendBtn, burstBtn),
+    h('div', { class: 'send-row' }, keyInput, predicted, sendBtn, traceBtn, burstBtn),
     result,
     verifier, client, errors);
 
