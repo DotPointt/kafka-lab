@@ -40,6 +40,12 @@ jobs:
           cp docs/ru/*.md _site/docs/ru/
           cp demo/recording.json _site/demo/
 
+          # Cache busting: Pages caches files for 10 minutes, so a returning visitor could get a new index.html
+          # with old modules. Every script/style URL gets the commit version, including module imports.
+          V="${GITHUB_SHA::8}"
+          sed -i -E "s#(from '\./[a-z0-9-]+\.js)'#\1?v=$V'#g; s#import\('(\./[a-z0-9-]+\.js)'\)#import('\1?v=$V')#g" _site/js/*.js
+          sed -i -E "s#href=\"css/app\.css\"#href=\"css/app.css?v=$V\"#; s#src=\"js/main\.js\"#src=\"js/main.js?v=$V\"#; s#src=\"config\.js\"#src=\"config.js?v=$V\"#" _site/index.html
+
           # Demo mode: the UI replays the recording instead of control-center's live stream
           cat > _site/config.js <<EOF
           window.KAFKA_LAB = { mode: 'demo', repo: '${{ github.server_url }}/${{ github.repository }}' };
